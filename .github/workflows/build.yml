@@ -49,7 +49,10 @@ jobs:
           # Enable ARM64 foreign architecture and configure sources
           sudo dpkg --add-architecture arm64
 
-          # Add ARM64 sources - use main archive for ARM64 packages
+          # Remove old ARM64 entries from sources.list that point to wrong URLs
+          sudo sed -i '/^deb \[arch=arm64\]/d' /etc/apt/sources.list
+
+          # Add ARM64 sources using ports.ubuntu.com
           echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64.list
           echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
           echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
