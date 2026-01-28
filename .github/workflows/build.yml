@@ -183,16 +183,20 @@ jobs:
           mkdir -p build
           cd build
 
-          # Configure for native ARM64 build
+          # Configure for native ARM64 build - minimal options
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_CLANG_TIDY=OFF \
+            -DBUILD_SHARED_LIBS=OFF \
             -DENABLE_CLI=ON \
             -DENABLE_DAEMON=ON \
             -DENABLE_WEB=OFF \
+            -DENABLE_GTK=OFF \
+            -DENABLE_QT=OFF \
             -DENABLE_MAC=OFF \
             -DENABLE_WIN=OFF \
-            -DENABLE_QT=OFF
+            -DENABLE_TESTS=OFF \
+            -DUSE_SYSTEMD=OFF
 
           echo ""
           echo "CMake configured successfully"
