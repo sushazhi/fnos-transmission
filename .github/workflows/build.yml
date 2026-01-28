@@ -194,6 +194,7 @@ jobs:
           # Configure for native ARM64 build
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_CLANG_TIDY=OFF \
             -DENABLE_CLI=ON \
             -DENABLE_DAEMON=ON \
             -DENABLE_WEB=ON \
