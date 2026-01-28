@@ -46,8 +46,14 @@ jobs:
 
       - name: Install dependencies
         run: |
-          # Enable ARM64 foreign architecture
+          # Enable ARM64 foreign architecture and configure sources
           sudo dpkg --add-architecture arm64
+
+          # Add ARM64 sources - use main archive for ARM64 packages
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
+
           sudo apt-get update -qq
 
           # Install ARM64 cross-compilation dependencies
