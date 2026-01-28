@@ -64,8 +64,6 @@ jobs:
             python3 \
             gcc-aarch64-linux-gnu \
             g++-aarch64-linux-gnu \
-            gcc-multilib \
-            g++-multilib \
             wget \
             unzip
 
@@ -204,6 +202,7 @@ jobs:
           cd build-arm64
 
           # Configure for ARM64 cross-compilation
+          # Using sysroot to avoid host header conflicts
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_SYSTEM_NAME=Linux \
@@ -211,6 +210,8 @@ jobs:
             -DCMAKE_CROSSCOMPILING=TRUE \
             -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
             -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+            -DCMAKE_C_FLAGS="--sysroot=/usr/aarch64-linux-gnu" \
+            -DCMAKE_CXX_FLAGS="--sysroot=/usr/aarch64-linux-gnu" \
             -DENABLE_CLI=ON \
             -DENABLE_DAEMON=ON \
             -DENABLE_WEB=ON \
