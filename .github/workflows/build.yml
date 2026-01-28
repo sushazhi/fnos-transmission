@@ -186,7 +186,11 @@ jobs:
           # Configure for native ARM64 build - minimal options
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER= \
+            -DCMAKE_CXX_COMPILER_LAUNCHER= \
+            -DCMAKE_C_CLANG_TIDY=OFF \
             -DCMAKE_CXX_CLANG_TIDY=OFF \
+            -DCMAKE_LANG_CLANG_TIDY=OFF \
             -DBUILD_SHARED_LIBS=OFF \
             -DENABLE_CLI=ON \
             -DENABLE_DAEMON=ON \
