@@ -28,12 +28,8 @@ env:
 
 jobs:
   build:
-    name: Build Transmission - ${{ matrix.arch }}
+    name: Build Transmission
     runs-on: ubuntu-22.04-arm
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [arm64]
 
     steps:
       - name: Checkout repository
@@ -42,7 +38,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq \
+          sudo apt-get install -y -qq --no-install-recommends \
             build-essential \
             cmake \
             ninja-build \
@@ -52,9 +48,7 @@ jobs:
             zlib1g-dev \
             libminiupnpc-dev \
             libappindicator3-dev \
-            libsystemd-dev \
             git \
-            python3 \
             wget \
             unzip
 
@@ -141,32 +135,28 @@ jobs:
           echo "✅ Cached binaries copied to app/bin:"
           ls -lh app/bin/
 
-      - name: Build from source (only if no cache)
+      - name: Download source and WebUI (parallel)
         if: steps.check_cache.outputs.USE_CACHE != 'true'
         run: |
-          echo "Building from source..."
+          echo "Downloading Transmission source and WebUI in parallel..."
           echo ""
-          echo "Downloading Transmission source: ${{ steps.versions.outputs.TRANSMISSION_VERSION }}"
-          wget -q "https://github.com/transmission/transmission/releases/download/${{ steps.versions.outputs.TRANSMISSION_VERSION }}/transmission-${{ steps.versions.outputs.TRANSMISSION_VERSION }}.tar.xz" -O /tmp/transmission.tar.xz
+
+          # Download in parallel
+          wget -q "https://github.com/transmission/transmission/releases/download/${{ steps.versions.outputs.TRANSMISSION_VERSION }}/transmission-${{ steps.versions.outputs.TRANSMISSION_VERSION }}.tar.xz" -O /tmp/transmission.tar.xz &
+          wget -q "https://github.com/jianxcao/transmission-web/releases/download/v${{ steps.versions.outputs.WEBUI_VERSION }}/transmission-web-v${{ steps.versions.outputs.WEBUI_VERSION }}.zip" -O /tmp/webui.zip &
+          wait
 
           if [ ! -s /tmp/transmission.tar.xz ]; then
             echo "ERROR: Failed to download Transmission source"
             exit 1
           fi
 
-          echo "Downloaded Transmission source: $(ls -lh /tmp/transmission.tar.xz | awk '{print $5}')"
-
-      - name: Download transmission-web UI
-        if: steps.check_cache.outputs.USE_CACHE != 'true'
-        run: |
-          echo "Downloading transmission-web v${{ steps.versions.outputs.WEBUI_VERSION }}..."
-          wget -q "https://github.com/jianxcao/transmission-web/releases/download/v${{ steps.versions.outputs.WEBUI_VERSION }}/transmission-web-v${{ steps.versions.outputs.WEBUI_VERSION }}.zip" -O /tmp/webui.zip
-
           if [ ! -s /tmp/webui.zip ]; then
             echo "ERROR: Failed to download transmission-web UI"
             exit 1
           fi
 
+          echo "Downloaded Transmission: $(ls -lh /tmp/transmission.tar.xz | awk '{print $5}')"
           echo "Downloaded WebUI: $(ls -lh /tmp/webui.zip | awk '{print $5}')"
 
       - name: Extract source and WebUI
@@ -209,7 +199,7 @@ jobs:
         if: steps.check_cache.outputs.USE_CACHE != 'true'
         run: |
           cd /tmp/transmission-build/build
-          make -j$(nproc) transmission-daemon transmission-cli transmission-remote
+          ninja transmission-daemon transmission-cli transmission-remote
 
           echo "Build completed:"
           ls -la daemon/ cli/ utils/ 2>/dev/null || find . -name "transmission-*" -type f -executable
@@ -253,21 +243,6 @@ jobs:
           ls -lh app/bin/
           echo "WebUI:"
           ls -la app/ui/transmission/ | head -10
-
-      - name: Create default config
-        run: |
-          cat > app/ui/transmission/config.json << 'EOF'
-          {
-            "webui": {
-              "theme": "auto",
-              "language": "zh-CN"
-            },
-            "transmission": {
-              "rpc-url": "/transmission/rpc",
-              "rpc-timeout": 30
-            }
-          }
-          EOF
 
       - name: Verify binary
         run: |
@@ -322,7 +297,7 @@ jobs:
             BUILD_METHOD="🚀 Cached binaries (instant)"
             CACHE_INFO="**Source:** ${{ steps.check_cache.outputs.CACHED_AT }}"
           else
-            BUILD_METHOD="🔨 Cross-compilation from source"
+            BUILD_METHOD="🔨 Native compilation from source"
             CACHE_INFO="**Build Time:** $(date)"
           fi
 
