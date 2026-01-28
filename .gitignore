@@ -1,0 +1,25 @@
+# fnOS app package - do not commit build outputs
+app/src/build/
+*.fpk
+*.sha256sum
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+temp/
+
+# But keep builds directory (pre-built binaries)
+!builds/
+builds/*
+!builds/README.md
+!builds/VERSION

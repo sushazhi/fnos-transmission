@@ -1,0 +1,125 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag version to release (e.g., v4.1.0)'
+        required: true
+        default: ''
+
+permissions:
+  contents: write
+
+env:
+  APP_VERSION: 4.1.0
+
+jobs:
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version from tag
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: Invalid tag format"
+            exit 1
+          fi
+
+          VERSION=${TAG#v}
+          echo "TAG=${TAG}" >> $GITHUB_OUTPUT
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Release version: ${VERSION}"
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: transmission-*-fpk
+          path: ./artifacts
+          merge-multiple: true
+
+      - name: List downloaded artifacts
+        run: |
+          echo "=== Downloaded Artifacts ==="
+          find ./artifacts -type f -ls
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum *.fpk > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create release notes
+        run: |
+          VERSION="${{ steps.get_version.outputs.VERSION }}"
+          TAG="${{ steps.get_version.outputs.TAG }}"
+          REPO="${{ github.repository }}"
+
+          cat > release_notes.md << EOF
+          # Transmission for fnOS - Version ${VERSION}
+
+          ## Changes
+          - Updated to Transmission ${VERSION}
+          - Default WebUI enabled
+
+          ## Download
+          | Architecture | Package | SHA256 |
+          |--------------|---------|--------|
+          | ARM64 | [transmission-${VERSION}-arm64.fpk](https://github.com/${REPO}/releases/download/${TAG}/transmission-${VERSION}-arm64.fpk) | See SHA256SUMS.txt |
+
+          ## Installation
+          \`\`\`bash
+          appcenter-cli install-local transmission-${VERSION}-arm64.fpk
+          \`\`\`
+
+          ## Verification
+          \`\`\`bash
+          sha256sum -c SHA256SUMS.txt
+          \`\`\`
+
+          ## Access
+          - WebUI: http://<NAS_IP>:9091/transmission/
+          - Port: 9091
+
+          ## Support
+          - [Report Issues](https://github.com/${REPO}/issues)
+          EOF
+
+          cat release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.get_version.outputs.TAG }}
+          name: Transmission for fnOS v${{ steps.get_version.outputs.VERSION }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/*.fpk
+            artifacts/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release summary
+        run: |
+          cat << EOF >> $GITHUB_STEP_SUMMARY
+          ## Release Created
+
+          **Version:** v${{ steps.get_version.outputs.VERSION }}
+          **Tag:** ${{ steps.get_version.outputs.TAG }}
+          **Release URL:** https://github.com/${{ github.repository }}/releases/tag/${{ steps.get_version.outputs.TAG }}
+          EOF

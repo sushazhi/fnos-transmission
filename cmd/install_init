@@ -1,0 +1,33 @@
+#!/bin/bash
+# cmd/install_init - Transmission安装初始化脚本
+
+set -e
+
+# 错误日志文件
+ERROR_LOG="${TRIM_TEMP_LOGFILE:-/tmp/transmission_error.log}"
+
+# 写入错误日志并退出
+error_exit() {
+    local message="$1"
+    local exit_code="${2:-1}"
+    echo "$message" > "$ERROR_LOG"
+    exit $exit_code
+}
+
+echo "正在安装 Transmission..."
+
+# 检查环境变量
+if [ -z "$TRIM_PKGVAR" ]; then
+    error_exit "错误：TRIM_PKGVAR 环境变量未设置，安装失败"
+fi
+
+DATA_DIR="$TRIM_PKGVAR"
+CONFIG_DIR="${DATA_DIR}/settings.json"
+
+# 创建目录
+if ! mkdir -p "${DATA_DIR}/torrents" 2>/dev/null; then
+    error_exit "错误：无法创建数据目录，安装失败"
+fi
+
+echo "安装初始化完成"
+exit 0

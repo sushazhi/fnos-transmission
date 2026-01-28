@@ -1,0 +1,37 @@
+#!/bin/bash
+# cmd/uninstall_init - Transmission卸载初始化脚本
+# 注意：TRIM_TEMP_LOGFILE在此脚本中不可用，错误日志不会展示给用户
+
+set -e
+
+echo "正在卸载 Transmission..."
+
+# 获取用户选择的数据处理方式
+DATA_ACTION="${wizard_data_action:-keep}"
+echo "用户选择的数据处理方式: $DATA_ACTION"
+
+# 删除配置目录
+CONFIG_DIR="${TRIM_PKGETC}"
+if [ -d "$CONFIG_DIR" ]; then
+    rm -rf "$CONFIG_DIR" 2>/dev/null || echo "警告：无法删除配置目录"
+fi
+
+# 删除 HOME 目录
+HOME_DIR="${TRIM_PKGHOME}"
+if [ -d "$HOME_DIR" ]; then
+    rm -rf "$HOME_DIR" 2>/dev/null || echo "警告：无法删除 HOME 目录"
+fi
+
+# 根据用户选择处理数据目录
+DATA_DIR="${TRIM_PKGVAR}"
+if [ -d "$DATA_DIR" ]; then
+    if [ "$DATA_ACTION" = "delete" ]; then
+        echo "删除数据目录 (用户选择删除): $DATA_DIR"
+        rm -rf "$DATA_DIR"
+    else
+        echo "保留数据目录 (用户选择保留): $DATA_DIR"
+    fi
+fi
+
+echo "卸载初始化完成"
+exit 0

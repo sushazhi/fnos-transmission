@@ -1,0 +1,159 @@
+#!/bin/bash
+# cmd/config_callback - Transmission配置回调脚本
+# 注意：TRIM_TEMP_LOGFILE在此脚本中不可用，错误日志不会展示给用户
+# 功能：应用或更新用户配置的用户名密码
+
+set -e
+
+APP_NAME="transmission-daemon"
+DATA_DIR="${TRIM_PKGVAR}"
+CONFIG_DIR="${DATA_DIR}/settings.json"
+
+echo "正在应用 Transmission 配置..."
+
+# 检查配置目录
+if [ -z "$DATA_DIR" ]; then
+    echo "错误：TRIM_PKGVAR 环境变量未设置"
+    exit 1
+fi
+
+# 创建配置目录
+mkdir -p "$DATA_DIR"
+
+# 获取用户配置（从向导或环境变量）
+RPC_USERNAME="${rpc_username:-admin}"
+RPC_PASSWORD="${rpc_password:-password}"
+
+# 生成加密密码 - Transmission格式: {SHA1(password + salt)salt}
+generate_encrypted_password() {
+    local plain_password="$1"
+    local salt=$(head -c 7 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 7)
+    local hash=$(echo -n "${plain_password}${salt}" | sha1sum | cut -d' ' -f1)
+    echo "{${hash}${salt}}"
+}
+
+echo "正在生成加密密码..."
+ENCRYPTED_PASSWORD=$(generate_encrypted_password "$RPC_PASSWORD")
+echo "用户名: ${RPC_USERNAME}"
+
+# 获取端口配置
+if [ -n "$TRIM_SERVICE_PORT" ]; then
+    WEBUI_PORT="$TRIM_SERVICE_PORT"
+else
+    WEBUI_PORT=9090
+fi
+
+# 读取现有配置或创建新配置
+if [ -f "$CONFIG_DIR" ]; then
+    echo "更新现有配置..."
+    
+    python3 << PYEOF
+import json
+import sys
+
+config_file = "$CONFIG_DIR"
+username = "$RPC_USERNAME"
+encrypted_password = "$ENCRYPTED_PASSWORD"
+
+try:
+    with open(config_file, 'r') as f:
+        config = json.load(f)
+    
+    config['rpc-username'] = username
+    config['rpc-password'] = encrypted_password
+    config['rpc-authentication-required'] = True
+    
+    with open(config_file, 'w') as f:
+        json.dump(config, f, indent=4)
+    
+    print(f"配置更新成功")
+    print(f"用户名: {username}")
+    
+except Exception as e:
+    print(f"更新配置时出错: {e}", file=sys.stderr)
+    sys.exit(1)
+PYEOF
+
+else
+    echo "创建新配置..."
+    
+    cat > "$CONFIG_DIR" << EOF
+{
+    "alt-speed-down": 50,
+    "alt-speed-enabled": false,
+    "alt-speed-up": 50,
+    "bind-address-ipv4": "0.0.0.0",
+    "bind-address-ipv6": "::",
+    "blocklist-enabled": false,
+    "cache-size-mb": 4,
+    "dht-enabled": true,
+    "download-dir": "/vol1/1000/downloads",
+    "download-queue-enabled": true,
+    "download-queue-size": 5,
+    "encryption": 1,
+    "idle-seeding-limit": 30,
+    "idle-seeding-limit-enabled": false,
+    "incomplete-dir": "/vol1/1000/temp",
+    "incomplete-dir-enabled": true,
+    "lpd-enabled": true,
+    "message-level": 2,
+    "peer-limit-global": 200,
+    "peer-limit-per-torrent": 50,
+    "peer-port": 51413,
+    "peer-port-random-high": 65535,
+    "peer-port-random-low": 49152,
+    "peer-port-random-on-start": true,
+    "peer-socket-tos": "default",
+    "pex-enabled": true,
+    "port-forwarding-enabled": false,
+    "preallocation": 1,
+    "prefetch-enabled": 1,
+    "queue-stalled-enabled": true,
+    "queue-stalled-minutes": 30,
+    "ratio-limit": 2,
+    "ratio-limit-enabled": false,
+    "rename-partial-files": true,
+    "rpc-authentication-required": true,
+    "rpc-bind-address": "0.0.0.0",
+    "rpc-enabled": true,
+    "rpc-host-whitelist": "",
+    "rpc-host-whitelist-enabled": true,
+    "rpc-password": "${ENCRYPTED_PASSWORD}",
+    "rpc-port": ${WEBUI_PORT},
+    "rpc-url": "/transmission/",
+    "rpc-username": "${RPC_USERNAME}",
+    "rpc-whitelist": "127.0.0.1",
+    "rpc-whitelist-enabled": false,
+    "scrape-paused-torrents-enabled": true,
+    "seed-queue-enabled": false,
+    "seed-queue-size": 10,
+    "speed-limit-down": 100,
+    "speed-limit-down-enabled": false,
+    "speed-limit-up": 100,
+    "speed-limit-up-enabled": false,
+    "start-added-torrents": true,
+    "trash-original-torrent-files": false,
+    "umask": 18,
+    "upload-slots-per-torrent": 14,
+    "utp-enabled": true
+}
+EOF
+    
+    echo "配置创建成功，用户名: ${RPC_USERNAME}"
+fi
+
+echo ""
+echo "==================================="
+echo "Transmission 配置已应用"
+echo "==================================="
+echo ""
+echo "用户名: ${RPC_USERNAME}"
+echo "加密密码: ${ENCRYPTED_PASSWORD}"
+echo ""
+echo "⚠️  重要：请在首次登录后立即修改默认密码！"
+echo ""
+echo "WebUI: http://<NAS_IP>:9090/transmission/"
+echo ""
+
+echo "Transmission 配置应用完成"
+exit 0

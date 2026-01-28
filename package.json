@@ -1,0 +1,13 @@
+{
+  "name": "transmission-fnos",
+  "version": "4.1.0",
+  "description": "Transmission for Feiniu NAS - Lightweight BitTorrent client",
+  "scripts": {
+    "lint:shell": "shellcheck cmd/* wizard/*",
+    "lint:json": "python3 -m json.tool config/privilege && python3 -m json.tool config/resource",
+    "lint:manifest": "grep -E '^(appname|version|display_name|desc|platform|source) = ' manifest",
+    "lint": "npm run lint:shell && npm run lint:json && npm run lint:manifest",
+    "package": "fnpack build app",
+    "clean": "rm -rf app/src/build"
+  }
+}

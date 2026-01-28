@@ -1,0 +1,27 @@
+#!/bin/bash
+# cmd/config_init - Transmission配置初始化脚本
+# 注意：TRIM_TEMP_LOGFILE在此脚本中不可用，错误日志不会展示给用户
+
+set -e
+
+echo "正在初始化 Transmission 配置..."
+
+# 检查配置目录
+if [ -z "$TRIM_PKGVAR" ]; then
+    echo "错误：TRIM_PKGVAR 环境变量未设置"
+    exit 1
+fi
+
+mkdir -p "$TRIM_PKGVAR"
+
+# 检查是否已有配置
+CONFIG_DIR="${TRIM_PKGVAR}/settings.json"
+if [ -f "$CONFIG_DIR" ]; then
+    echo "配置文件已存在: $CONFIG_DIR"
+    echo "使用现有配置"
+else
+    echo "未找到现有配置"
+fi
+
+echo "Transmission 配置初始化完成"
+exit 0

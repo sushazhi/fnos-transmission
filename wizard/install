@@ -1,0 +1,77 @@
+[
+  {
+    "stepTitle": "🚀 欢迎安装 Transmission",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "✨ <b>轻量级BitTorrent下载工具</b>，默认启用WebUI现代界面"
+      },
+      {
+        "type": "tips",
+        "helpText": "📡 <b>核心功能：</b>磁力链接、种子文件、DHT/PEX/LSD P2P网络、速度控制"
+      },
+      {
+        "type": "tips",
+        "helpText": "🎨 <b>WebUI设计：</b>简洁现代，响应式设计，支持深色模式"
+      },
+      {
+        "type": "tips",
+        "helpText": "🔐 <b>访问信息：</b>地址 http://<NAS_IP>:9090/transmission/"
+      },
+      {
+        "type": "tips",
+        "helpText": "🐛 <b>问题反馈：</b><a href='https://github.com/sushazhi/fnos-transmission/issues' target='_blank'>GitHub Issues</a>"
+      }
+    ]
+  },
+  {
+    "stepTitle": "🔑 配置访问凭证",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "💡 <b>设置WebUI访问用户名和密码，建议首次安装后立即修改默认密码</b>"
+      },
+      {
+        "type": "input",
+        "name": "rpc_username",
+        "label": "用户名",
+        "default": "admin",
+        "placeholder": "请输入用户名",
+        "required": true
+      },
+      {
+        "type": "password",
+        "name": "rpc_password",
+        "label": "密码",
+        "default": "password",
+        "placeholder": "请输入密码",
+        "required": true
+      },
+      {
+        "type": "tips",
+        "helpText": "⚠️ <b>安全提醒：</b>首次登录后请立即修改默认密码，确保数据安全"
+      }
+    ]
+  },
+  {
+    "stepTitle": "📋 安装确认",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "✅ <b>准备就绪！</b>点击右下角安装按钮开始部署"
+      },
+      {
+        "type": "tips",
+        "helpText": "📦 <b>安装内容：</b>Transmission核心、WebUI界面、配置文件"
+      },
+      {
+        "type": "tips",
+        "helpText": "🌐 <b>访问地址：</b>http://<NAS_IP>:9090/transmission/"
+      },
+      {
+        "type": "tips",
+        "helpText": "🔐 <b>默认凭证：</b>用户名: admin，密码: password"
+      }
+    ]
+  }
+]

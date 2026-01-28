@@ -1,0 +1,124 @@
+#!/bin/bash
+# cmd/upgrade_callback - Transmission升级回调脚本
+# 功能：升级后恢复数据、设置权限、验证配置、启动服务
+
+set -e
+
+# 错误日志文件
+ERROR_LOG="${TRIM_TEMP_LOGFILE:-/tmp/transmission-daemon_error.log}"
+
+# 写入错误日志并退出
+error_exit() {
+    local message="$1"
+    local exit_code="${2:-1}"
+    echo "$message" > "$ERROR_LOG"
+    exit $exit_code
+}
+
+APP_NAME="transmission-daemon"
+BIN_DIR="${TRIM_APPDEST}/bin"
+DATA_DIR="${TRIM_PKGVAR}"
+CONFIG_DIR="${DATA_DIR}/settings.json"
+CONFIG_FILE="${CONFIG_DIR}"
+PID_FILE="${TRIM_PKGTMP}/${APP_NAME}.pid"
+
+# 备份在shares目录
+SHARE_DIR="/vol1/@appshare/transmission"
+BACKUP_DIR="${SHARE_DIR}/.data_backup"
+
+echo "=================================="
+echo "Transmission 升级完成"
+echo "=================================="
+echo ""
+
+# 设置可执行权限
+echo "[1/3] 设置可执行权限..."
+if ! chmod +x "$BIN_DIR/transmission-daemon" 2>/dev/null; then
+    error_exit "错误：设置可执行权限失败，升级完成但服务可能无法启动"
+fi
+
+# 验证二进制文件
+echo "[2/3] 验证新安装..."
+if [ -x "$BIN_DIR/transmission-daemon" ]; then
+    echo "找到 transmission-daemon 并可执行"
+    VERSION=$("$BIN_DIR/transmission-daemon" --version 2>&1 | head -1)
+    echo "版本: $VERSION"
+else
+    error_exit "错误：transmission-daemon 未找到或不可执行"
+fi
+
+# 恢复数据（如果存在备份）
+echo ""
+echo "[3/3] 恢复数据..."
+
+BACKUP_EXISTS=false
+if [ -d "$BACKUP_DIR" ] && [ -n "$(ls -A "$BACKUP_DIR" 2>/dev/null)" ]; then
+    BACKUP_EXISTS=true
+fi
+
+if [ "$BACKUP_EXISTS" = true ]; then
+    # 有备份：直接恢复数据
+    echo "从备份恢复数据..."
+    mkdir -p "$DATA_DIR"
+    rm -rf "$DATA_DIR"/* 2>/dev/null || true
+    cp -a "$BACKUP_DIR"/* "$DATA_DIR/" 2>/dev/null || true
+    echo "数据恢复成功"
+    
+    # 删除备份
+    rm -rf "$BACKUP_DIR"
+    echo "已清理shares中的备份"
+else
+    # 检查是否有真实数据
+    CONFIG_EXISTS=false
+    if [ -f "$CONFIG_FILE" ]; then
+        if [ -d "$DATA_DIR/torrents" ] && [ -n "$(ls -A "$DATA_DIR/torrents" 2>/dev/null)" ]; then
+            CONFIG_EXISTS=true
+        elif [ -d "$DATA_DIR/resume" ] && [ -n "$(ls -A "$DATA_DIR/resume" 2>/dev/null)" ]; then
+            CONFIG_EXISTS=true
+        fi
+    fi
+    
+    if [ "$CONFIG_EXISTS" = true ]; then
+        echo "发现现有数据，使用当前数据"
+    else
+        echo "无备份且无现有数据，保持默认配置"
+        mkdir -p "$(dirname "$CONFIG_DIR")"
+    fi
+fi
+
+# 启动服务
+echo ""
+echo "[完成] 启动服务..."
+
+# 查找main脚本
+MAIN_SCRIPT=""
+for path in "${TRIM_APPDEST}/cmd/main" "${TRIM_PKGETC}/../cmd/main" "/var/apps/transmission/cmd/main"; do
+    if [ -x "$path" ]; then
+        MAIN_SCRIPT="$path"
+        break
+    fi
+done
+
+if [ -n "$MAIN_SCRIPT" ]; then
+    "$MAIN_SCRIPT" start
+    EXIT_CODE=$?
+else
+    error_exit "错误：未找到 main 脚本，启动失败"
+fi
+
+if [ $EXIT_CODE -eq 0 ]; then
+    echo ""
+    echo "=================================="
+    echo "Transmission 升级成功完成！"
+    echo "=================================="
+    echo ""
+    echo "WebUI: http://<NAS_IP>:9090/transmission/"
+    exit 0
+else
+    echo ""
+    echo "=================================="
+    echo "警告：升级完成但服务启动失败"
+    echo "=================================="
+    echo "请检查日志: ${TRIM_PKGVAR}/${APP_NAME}.log"
+    error_exit "错误：服务启动失败，请检查配置"
+fi

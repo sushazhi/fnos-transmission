@@ -1,0 +1,13 @@
+#!/bin/bash
+# cmd/uninstall_callback - Transmission卸载回调脚本
+# 注意：TRIM_TEMP_LOGFILE在此脚本中不可用，错误日志不会展示给用户
+
+set -e
+
+echo "正在清理 Transmission..."
+
+# 清理临时文件
+rm -f "${TRIM_PKGTMP}/transmission-daemon.pid" 2>/dev/null
+
+echo "清理完成"
+exit 0

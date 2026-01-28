@@ -1,0 +1,12 @@
+{
+    ".url": {
+        "transmission.Application": {
+            "title": "Transmission",
+            "icon": "images/icon_{0}.png",
+            "type": "iframe",
+            "port": "9090",
+            "url": "/transmission/",
+            "allUsers": true
+        }
+    }
+}

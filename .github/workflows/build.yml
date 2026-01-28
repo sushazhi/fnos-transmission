@@ -1,0 +1,442 @@
+name: Build Transmission for fnOS
+
+on:
+  push:
+    branches: [main, develop]
+    tags: [v*]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Specific version to build (e.g., 4.1.0)"
+        required: false
+        default: ""
+      webui_version:
+        description: "WebUI version (e.g., 0.0.7)"
+        required: false
+        default: "0.0.7"
+
+permissions:
+  contents: read
+
+env:
+  APP_VERSION: 4.1.0
+  TRANSMISSION_VERSION: 4.1.0
+  WEBUI_VERSION: 0.0.7
+  ARCH: arm64
+
+jobs:
+  build:
+    name: Build Transmission - ${{ matrix.arch }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU for ARM64 cross-compilation
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential \
+            cmake \
+            pkg-config \
+            libssl-dev \
+            libcurl4-openssl-dev \
+            zlib1g-dev \
+            libminiupnpc-dev \
+            libappindicator3-dev \
+            libsystemd-dev \
+            qtbase5-dev \
+            qttools5-dev \
+            libqt5svg5-dev \
+            git \
+            python3 \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            wget \
+            unzip
+
+      - name: Get versions
+        id: versions
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${{ env.TRANSMISSION_VERSION }}"
+          fi
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.webui_version }}" ]; then
+            WEBUI_VERSION="${{ github.event.inputs.webui_version }}"
+          else
+            WEBUI_VERSION="${{ env.WEBUI_VERSION }}"
+          fi
+          
+          echo "TRANSMISSION_VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "WEBUI_VERSION=${WEBUI_VERSION}" >> $GITHUB_OUTPUT
+          echo "Building Transmission ${VERSION} with WebUI ${WEBUI_VERSION}"
+
+      - name: Check for cached binaries
+        id: check_cache
+        run: |
+          echo "Checking for cached binaries..."
+
+          # Check if VERSION file exists in builds/
+          if [ -f "builds/VERSION" ]; then
+            echo "Found cached VERSION file"
+
+            # Read cached versions
+            source builds/VERSION
+
+            echo "Cached Transmission version: ${TRANSMISSION_VERSION}"
+            echo "Cached WebUI version: ${WEBUI_VERSION}"
+            echo "Cached build date: ${BUILT_AT}"
+
+            # Compare with requested versions
+            if [ "${TRANSMISSION_VERSION}" = "${{ steps.versions.outputs.TRANSMISSION_VERSION }}" ] && \
+               [ "${WEBUI_VERSION}" = "${{ steps.versions.outputs.WEBUI_VERSION }}" ]; then
+              echo "✅ Cached binaries match requested versions!"
+              echo "USE_CACHE=true" >> $GITHUB_OUTPUT
+              echo "CACHED_AT=${BUILT_AT}" >> $GITHUB_OUTPUT
+            else
+              echo "⚠️ Cached versions don't match, will rebuild"
+              echo "USE_CACHE=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "No cached binaries found, will build from source"
+            echo "USE_CACHE=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Use cached binaries (if available)
+        if: steps.check_cache.outputs.USE_CACHE == 'true'
+        run: |
+          echo "✅ Using cached binaries from ${{ steps.check_cache.outputs.CACHED_AT }}"
+          echo ""
+          echo "Cached binary info:"
+          ls -lh builds/
+
+          # Verify binaries exist
+          if [ ! -f "builds/transmission-daemon" ]; then
+            echo "❌ Cached binary missing, falling back to build"
+            echo "USE_CACHE=false" >> $GITHUB_ENV
+            exit 1
+          fi
+
+          # Copy cached binaries to app/bin
+          mkdir -p app/bin
+          cp builds/transmission-daemon app/bin/
+
+          if [ -f "builds/transmission-cli" ]; then
+            cp builds/transmission-cli app/bin/
+          fi
+
+          if [ -f "builds/transmission-remote" ]; then
+            cp builds/transmission-remote app/bin/
+          fi
+
+          chmod +x app/bin/*
+
+          echo ""
+          echo "✅ Cached binaries copied to app/bin:"
+          ls -lh app/bin/
+
+      - name: Build from source (only if no cache)
+        if: steps.check_cache.outputs.USE_CACHE != 'true'
+        run: |
+          echo "Building from source..."
+          echo ""
+          echo "Downloading Transmission source: ${{ steps.versions.outputs.TRANSMISSION_VERSION }}"
+          wget -q "https://github.com/transmission/transmission/releases/download/${{ steps.versions.outputs.TRANSMISSION_VERSION }}/transmission-${{ steps.versions.outputs.TRANSMISSION_VERSION }}.tar.xz" -O /tmp/transmission.tar.xz
+
+          if [ ! -s /tmp/transmission.tar.xz ]; then
+            echo "ERROR: Failed to download Transmission source"
+            exit 1
+          fi
+
+          echo "Downloaded Transmission source: $(ls -lh /tmp/transmission.tar.xz | awk '{print $5}')"
+
+      - name: Download transmission-web UI
+        if: steps.check_cache.outputs.USE_CACHE != 'true'
+        run: |
+          echo "Downloading transmission-web v${{ steps.versions.outputs.WEBUI_VERSION }}..."
+          wget -q "https://github.com/jianxcao/transmission-web/releases/download/v${{ steps.versions.outputs.WEBUI_VERSION }}/transmission-web-v${{ steps.versions.outputs.WEBUI_VERSION }}.zip" -O /tmp/webui.zip
+
+          if [ ! -s /tmp/webui.zip ]; then
+            echo "ERROR: Failed to download transmission-web UI"
+            exit 1
+          fi
+
+          echo "Downloaded WebUI: $(ls -lh /tmp/webui.zip | awk '{print $5}')"
+
+      - name: Extract source and WebUI
+        if: steps.check_cache.outputs.USE_CACHE != 'true'
+        run: |
+          mkdir -p /tmp/transmission-build
+          cd /tmp/transmission-build
+          tar -xf /tmp/transmission.tar.xz --strip-components=1
+
+          mkdir -p /tmp/webui
+          cd /tmp/webui
+          unzip -q /tmp/webui.zip
+
+          echo "Source structure:"
+          ls -la /tmp/transmission-build | head -10
+          echo "WebUI structure:"
+          ls -la /tmp/webui | head -10
+
+      - name: Build Transmission for ARM64
+        if: steps.check_cache.outputs.USE_CACHE != 'true'
+        run: |
+          cd /tmp/transmission-build
+          mkdir -p build-arm64
+          cd build-arm64
+
+          # Configure for ARM64 cross-compilation
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+            -DCMAKE_CROSSCOMPILING=TRUE \
+            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+            -DENABLE_CLI=ON \
+            -DENABLE_DAEMON=ON \
+            -DENABLE_WEB=ON \
+            -DENABLE_MAC=OFF \
+            -DENABLE_WIN=OFF \
+            -DENABLE_QT=OFF
+
+      - name: Compile binaries
+        if: steps.check_cache.outputs.USE_CACHE != 'true'
+        run: |
+          cd /tmp/transmission-build/build-arm64
+          make -j$(nproc) transmission-daemon transmission-cli transmission-remote
+          
+          echo "Build completed:"
+          ls -la daemon/ cli/ utils/ 2>/dev/null || find . -name "transmission-*" -type f -executable
+
+      - name: Prepare app structure
+        run: |
+          mkdir -p app/src/build app/bin app/ui/transmission
+
+          if [ "${{ steps.check_cache.outputs.USE_CACHE }}" = "true" ]; then
+            echo "Using cached binaries..."
+          else
+            echo "Using newly built binaries..."
+
+            # Copy built binaries
+            if [ -f "/tmp/transmission-build/build-arm64/daemon/transmission-daemon" ]; then
+              cp /tmp/transmission-build/build-arm64/daemon/transmission-daemon app/bin/
+            elif [ -f "/tmp/transmission-build/build-arm64/transmission-daemon" ]; then
+              cp /tmp/transmission-build/build-arm64/transmission-daemon app/bin/
+            else
+              echo "ERROR: transmission-daemon not found"
+              find /tmp/transmission-build -name "transmission-daemon" -type f
+              exit 1
+            fi
+
+            # Copy other utilities if available
+            find /tmp/transmission-build/build-arm64 -name "transmission-cli" -type f -exec cp {} app/bin/ \; 2>/dev/null || true
+            find /tmp/transmission-build/build-arm64 -name "transmission-remote" -type f -exec cp {} app/bin/ \; 2>/dev/null || true
+
+            chmod +x app/bin/*
+          fi
+
+          # Always copy WebUI (unless using cache with pre-copied webui)
+          if [ -d "/tmp/webui" ]; then
+            cp -r /tmp/webui/* app/ui/transmission/
+          else
+            echo "WebUI not found, checking cache..."
+          fi
+          
+          echo "App structure prepared:"
+          echo "Binaries:"
+          ls -lh app/bin/
+          echo "WebUI:"
+          ls -la app/ui/transmission/ | head -10
+
+      - name: Create default config
+        run: |
+          cat > app/ui/transmission/config.json << 'EOF'
+          {
+            "webui": {
+              "theme": "auto",
+              "language": "zh-CN"
+            },
+            "transmission": {
+              "rpc-url": "/transmission/rpc",
+              "rpc-timeout": 30
+            }
+          }
+          EOF
+
+      - name: Verify binary
+        run: |
+          BINARY="app/bin/transmission-daemon"
+          if [ ! -f "$BINARY" ]; then
+            echo "ERROR: transmission-daemon not found"
+            exit 1
+          fi
+          
+          echo "Binary verification:"
+          file "$BINARY"
+          ls -lh "$BINARY"
+          
+          # Verify WebUI
+          if [ ! -f "app/ui/transmission/index.html" ]; then
+            echo "ERROR: WebUI index.html not found"
+            exit 1
+          fi
+          
+          echo "WebUI verification:"
+          ls -la app/ui/transmission/ | head -5
+
+      - name: Download fnpack
+        run: |
+          wget -q https://static2.fnnas.com/fnpack/fnpack-1.2.1-linux-amd64 -O fnpack
+          chmod +x fnpack
+
+      - name: Build .fpk package
+        run: |
+          ./fnpack build .
+          PACKAGE_NAME="transmission-${APP_VERSION}-arm64.fpk"
+          mv transmission.fpk "${PACKAGE_NAME}"
+          echo "PACKAGE_NAME=${PACKAGE_NAME}" >> $GITHUB_ENV
+
+      - name: Create SHA256 checksums
+        run: |
+          sha256sum "${PACKAGE_NAME}" > "${PACKAGE_NAME}.sha256sum"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: transmission-arm64-fpk
+          path: |
+            ${{ env.PACKAGE_NAME }}
+            ${{ env.PACKAGE_NAME }}.sha256sum
+          retention-days: 30
+
+      - name: Build summary
+        run: |
+          # Determine cache status
+          if [ "${{ steps.check_cache.outputs.USE_CACHE }}" = "true" ]; then
+            BUILD_METHOD="🚀 Cached binaries (instant)"
+            CACHE_INFO="**Source:** ${{ steps.check_cache.outputs.CACHED_AT }}"
+          else
+            BUILD_METHOD="🔨 Cross-compilation from source"
+            CACHE_INFO="**Build Time:** $(date)"
+          fi
+
+          cat << EOF >> $GITHUB_STEP_SUMMARY
+          ## Build Summary - Transmission for fnOS
+
+          **Version:** ${{ env.APP_VERSION }}
+          **Transmission Version:** ${{ steps.versions.outputs.TRANSMISSION_VERSION }}
+          **WebUI Version:** ${{ steps.versions.outputs.WEBUI_VERSION }}
+          **Architecture:** ${{ matrix.arch }}
+
+          **Build Method:** ${BUILD_METHOD}
+          ${CACHE_INFO}
+
+          **Git Info:**
+          - Commit: \`${{ github.sha }}\`
+          - Branch: \`${{ github.ref_name }}\`
+          - Triggered by: ${{ github.event_name }}
+
+          **Components:**
+          - Transmission daemon: ARM64 binary
+          - WebUI: transmission-web v${{ steps.versions.outputs.WEBUI_VERSION }}
+          - CLI utilities: Included
+
+          **Build Artifacts:**
+          - Package: \`${PACKAGE_NAME}\`
+          - Checksum: \`${PACKAGE_NAME}.sha256sum\`
+
+          **WebUI Features:**
+          - Modern responsive interface
+          - Chinese language support
+          - Auto theme detection
+          - Enhanced user experience
+          EOF
+
+      - name: Release artifacts (for tags)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ${{ env.PACKAGE_NAME }}
+            ${{ env.PACKAGE_NAME }}.sha256sum
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit binaries to repository
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Get target branch
+          TARGET_BRANCH="main"
+          echo "Target branch: ${TARGET_BRANCH}"
+
+          # Fetch latest changes
+          git fetch origin ${TARGET_BRANCH}
+
+          # Create builds directory
+          mkdir -p builds
+
+          # Copy binaries to builds directory
+          if [ -f "app/bin/transmission-daemon" ]; then
+            cp app/bin/transmission-daemon builds/
+            echo "Copied transmission-daemon to builds/"
+          fi
+
+          # Copy CLI tools if available
+          for tool in transmission-cli transmission-remote; do
+            if [ -f "app/bin/$tool" ]; then
+              cp app/bin/$tool builds/
+              echo "Copied $tool to builds/"
+            fi
+          done
+
+          # Create version info file
+          cat > builds/VERSION << EOF
+          TRANSMISSION_VERSION=${{ steps.versions.outputs.TRANSMISSION_VERSION }}
+          WEBUI_VERSION=${{ steps.versions.outputs.WEBUI_VERSION }}
+          APP_VERSION=${{ env.APP_VERSION }}
+          ARCH=arm64
+          BUILT_AT=$(date -u +%Y-%m-%d-%H:%M:%S)
+          COMMIT=${{ github.sha }}
+          EOF
+
+          echo "Created VERSION file"
+          cat builds/VERSION
+
+          # List files to be committed
+          echo ""
+          echo "Files in builds/:"
+          ls -lh builds/
+
+          # Add and commit
+          git add -f builds/
+          git merge --no-edit origin/${TARGET_BRANCH} || true
+
+          echo "ci: add build artifacts $(date -u +%Y-%m-%d)" > /tmp/commit_msg.txt
+          git commit -F /tmp/commit_msg.txt
+
+          # Push to main branch
+          git push https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git HEAD:${TARGET_BRANCH}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

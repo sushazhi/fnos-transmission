@@ -1,0 +1,88 @@
+#!/bin/bash
+# cmd/install_callback - Transmission安装后置脚本
+
+set -e
+
+APP_NAME="transmission-daemon"
+BIN_DIR="${TRIM_APPDEST}/bin"
+DATA_DIR="${TRIM_PKGVAR}"
+CONFIG_DIR="${DATA_DIR}/settings.json"
+ERROR_LOG="${TRIM_TEMP_LOGFILE:-/tmp/${APP_NAME}_error.log}"
+
+echo "Running ${APP_NAME} install_callback..."
+
+# 设置可执行权限
+if ! chmod +x "$BIN_DIR/transmission-daemon" 2>/dev/null; then
+    echo "Error: Failed to set executable permission" > "$ERROR_LOG"
+    exit 1
+fi
+
+# 获取用户配置（从向导或环境变量）
+RPC_USERNAME="${rpc_username:-admin}"
+RPC_PASSWORD="${rpc_password:-password}"
+
+# 生成加密密码 - Transmission格式: {SHA1(password + salt)salt}
+generate_encrypted_password() {
+    local plain_password="$1"
+    local salt=$(head -c 7 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 7)
+    local hash=$(echo -n "${plain_password}${salt}" | sha1sum | cut -d' ' -f1)
+    echo "{${hash}${salt}}"
+}
+
+echo "Applying configuration with encrypted password..."
+ENCRYPTED_PASSWORD=$(generate_encrypted_password "$RPC_PASSWORD")
+echo "Username: ${RPC_USERNAME}"
+echo "Encrypted password: ${ENCRYPTED_PASSWORD}"
+
+# 获取端口配置
+if [ -n "$TRIM_SERVICE_PORT" ]; then
+    WEBUI_PORT="$TRIM_SERVICE_PORT"
+else
+    WEBUI_PORT=9090
+fi
+
+# 创建配置目录
+mkdir -p "$DATA_DIR"
+
+# 生成配置文件
+        cat > "$CONFIG_DIR" << 'EOF'
+{
+    "download-dir": "/vol1/1000/downloads",
+    "incomplete-dir": "/vol1/1000/temp",
+    "incomplete-dir-enabled": true,
+    "dht-enabled": true,
+    "pex-enabled": true,
+    "lpd-enabled": true,
+    "encryption": 1,
+    "peer-limit-global": 200,
+    "peer-port": 51413,
+    "peer-port-random-on-start": true,
+    "rpc-enabled": true,
+    "rpc-authentication-required": true,
+    "rpc-port": ${WEBUI_PORT},
+    "rpc-url": "/transmission/",
+    "rpc-username": "${RPC_USERNAME}",
+    "rpc-password": "${ENCRYPTED_PASSWORD}",
+    "start-added-torrents": true,
+    "utp-enabled": true
+}
+EOF
+
+echo ""
+echo "=================================="
+echo "Transmission installation complete"
+echo "=================================="
+echo ""
+echo "WebUI: http://<NAS_IP>:9090/transmission/"
+echo ""
+echo "Username: ${RPC_USERNAME}"
+echo "Password: ${RPC_PASSWORD}"
+echo ""
+echo "⚠️  Important: Change the default password after first login!"
+echo ""
+echo "Data location: $DATA_DIR"
+echo "Config location: $CONFIG_DIR"
+echo ""
+
+echo "Transmission installed successfully"
+exit 0
