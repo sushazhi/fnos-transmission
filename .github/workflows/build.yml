@@ -189,6 +189,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=gcc \
             -DCMAKE_CXX_COMPILER=g++ \
+            -DCMAKE_CXX_CLANG_TIDY=OFF \
+            -DRUN_CLANG_TIDY=OFF \
             -DBUILD_SHARED_LIBS=OFF \
             -DENABLE_CLI=ON \
             -DENABLE_DAEMON=ON \
