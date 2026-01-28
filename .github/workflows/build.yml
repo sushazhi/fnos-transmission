@@ -199,9 +199,16 @@ jobs:
         if: steps.check_cache.outputs.USE_CACHE != 'true'
         run: |
           cd /tmp/transmission-build/build
-          # Use make instead of ninja due to parallel configure conflicts in third-party libs
-          make -j$(nproc) transmission-daemon transmission-cli transmission-remote
 
+          # Check available targets first
+          echo "Available targets:"
+          make help | grep -E "^  transmission" || true
+
+          # Build all transmission targets
+          make -j$(nproc) transmission-daemon transmission-cli transmission-remote || \
+          make -j$(nproc) all
+
+          echo ""
           echo "Build completed:"
           ls -la daemon/ cli/ utils/ 2>/dev/null || find . -name "transmission-*" -type f -executable
 
