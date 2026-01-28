@@ -29,7 +29,7 @@ env:
 jobs:
   build:
     name: Build Transmission - ${{ matrix.arch }}
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-22.04-arm
     strategy:
       fail-fast: false
       matrix:
@@ -39,41 +39,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up QEMU for ARM64 cross-compilation
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
       - name: Install dependencies
         run: |
-          # Enable ARM64 foreign architecture and configure sources
-          sudo dpkg --add-architecture arm64
-
-          # Remove old ARM64 entries from sources.list that point to wrong URLs
-          sudo sed -i '/^deb \[arch=arm64\]/d' /etc/apt/sources.list
-
-          # Add ARM64 sources using ports.ubuntu.com
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
-
           sudo apt-get update -qq
-
-          # Install ARM64 cross-compilation dependencies
           sudo apt-get install -y -qq \
             build-essential \
             cmake \
             pkg-config \
-            libssl-dev:arm64 \
-            libcurl4-openssl-dev:arm64 \
-            zlib1g-dev:arm64 \
-            libminiupnpc-dev:arm64 \
-            libappindicator3-dev:arm64 \
+            libssl-dev \
+            libcurl4-openssl-dev \
+            zlib1g-dev \
+            libminiupnpc-dev \
+            libappindicator3-dev \
+            libsystemd-dev \
             git \
             python3 \
-            gcc-aarch64-linux-gnu \
-            g++-aarch64-linux-gnu \
-            libc6-dev-arm64-cross \
             wget \
             unzip
 
@@ -208,43 +188,12 @@ jobs:
         if: steps.check_cache.outputs.USE_CACHE != 'true'
         run: |
           cd /tmp/transmission-build
-          mkdir -p build-arm64
-          cd build-arm64
+          mkdir -p build
+          cd build
 
-          # Create CMake toolchain file for ARM64 cross-compilation
-          cat > arm64-toolchain.cmake << 'EOF'
-          set(CMAKE_SYSTEM_NAME Linux)
-          set(CMAKE_SYSTEM_PROCESSOR aarch64)
-
-          # Specify the target sysroot (standard location)
-          set(CMAKE_SYSROOT /usr/aarch64-linux-gnu)
-
-          # Also search in multiarch directories for ARM64 packages
-          list(APPEND CMAKE_FIND_ROOT_PATH /usr/lib/aarch64-linux-gnu /usr/include/aarch64-linux-gnu)
-
-          # Force compiler to use sysroot and avoid host includes
-          set(CMAKE_C_COMPILER aarch64-linux-gnu-gcc)
-          set(CMAKE_CXX_COMPILER aarch64-linux-gnu-g++)
-
-          # Prevent CMake from searching in host directories
-          set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
-          set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
-          set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
-          set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
-
-          # Override compiler search path to use sysroot only
-          set(CMAKE_C_COMPILER_WORKS TRUE)
-          set(CMAKE_CXX_COMPILER_WORKS TRUE)
-
-          # Explicitly set sysroot for the compiler
-          add_compile_options(--sysroot=/usr/aarch64-linux-gnu)
-          add_link_options(--sysroot=/usr/aarch64-linux-gnu)
-          EOF
-
-          # Configure with the toolchain file
+          # Configure for native ARM64 build
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_TOOLCHAIN_FILE=arm64-toolchain.cmake \
             -DENABLE_CLI=ON \
             -DENABLE_DAEMON=ON \
             -DENABLE_WEB=ON \
@@ -255,9 +204,9 @@ jobs:
       - name: Compile binaries
         if: steps.check_cache.outputs.USE_CACHE != 'true'
         run: |
-          cd /tmp/transmission-build/build-arm64
+          cd /tmp/transmission-build/build
           make -j$(nproc) transmission-daemon transmission-cli transmission-remote
-          
+
           echo "Build completed:"
           ls -la daemon/ cli/ utils/ 2>/dev/null || find . -name "transmission-*" -type f -executable
 
@@ -271,10 +220,10 @@ jobs:
             echo "Using newly built binaries..."
 
             # Copy built binaries
-            if [ -f "/tmp/transmission-build/build-arm64/daemon/transmission-daemon" ]; then
-              cp /tmp/transmission-build/build-arm64/daemon/transmission-daemon app/bin/
-            elif [ -f "/tmp/transmission-build/build-arm64/transmission-daemon" ]; then
-              cp /tmp/transmission-build/build-arm64/transmission-daemon app/bin/
+            if [ -f "/tmp/transmission-build/build/daemon/transmission-daemon" ]; then
+              cp /tmp/transmission-build/build/daemon/transmission-daemon app/bin/
+            elif [ -f "/tmp/transmission-build/build/transmission-daemon" ]; then
+              cp /tmp/transmission-build/build/transmission-daemon app/bin/
             else
               echo "ERROR: transmission-daemon not found"
               find /tmp/transmission-build -name "transmission-daemon" -type f
@@ -282,8 +231,8 @@ jobs:
             fi
 
             # Copy other utilities if available
-            find /tmp/transmission-build/build-arm64 -name "transmission-cli" -type f -exec cp {} app/bin/ \; 2>/dev/null || true
-            find /tmp/transmission-build/build-arm64 -name "transmission-remote" -type f -exec cp {} app/bin/ \; 2>/dev/null || true
+            find /tmp/transmission-build/build -name "transmission-cli" -type f -exec cp {} app/bin/ \; 2>/dev/null || true
+            find /tmp/transmission-build/build -name "transmission-remote" -type f -exec cp {} app/bin/ \; 2>/dev/null || true
 
             chmod +x app/bin/*
           fi
