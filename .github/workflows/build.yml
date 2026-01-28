@@ -288,7 +288,7 @@ jobs:
 
       - name: Download fnpack
         run: |
-          wget -q https://static2.fnnas.com/fnpack/fnpack-1.2.1-linux-amd64 -O fnpack
+          wget -q https://static2.fnnas.com/fnpack/fnpack-1.2.1-linux-arm64 -O fnpack
           chmod +x fnpack
 
       - name: Build .fpk package
