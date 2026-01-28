@@ -179,21 +179,24 @@ jobs:
         if: steps.check_cache.outputs.USE_CACHE != 'true'
         run: |
           cd /tmp/transmission-build
+          rm -rf build
           mkdir -p build
           cd build
 
-          # Configure for native ARM64 build with ninja
+          # Configure for native ARM64 build
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_CLANG_TIDY=OFF \
-            -DCMAKE_MAKE_PROGRAM=ninja \
-            -G Ninja \
             -DENABLE_CLI=ON \
             -DENABLE_DAEMON=ON \
             -DENABLE_WEB=OFF \
             -DENABLE_MAC=OFF \
             -DENABLE_WIN=OFF \
             -DENABLE_QT=OFF
+
+          echo ""
+          echo "CMake configured successfully"
+          ls -la
 
       - name: Compile binaries
         if: steps.check_cache.outputs.USE_CACHE != 'true'
