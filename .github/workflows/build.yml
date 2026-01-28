@@ -45,6 +45,7 @@ jobs:
           sudo apt-get install -y -qq \
             build-essential \
             cmake \
+            ninja-build \
             pkg-config \
             libssl-dev \
             libcurl4-openssl-dev \
@@ -191,13 +192,15 @@ jobs:
           mkdir -p build
           cd build
 
-          # Configure for native ARM64 build
+          # Configure for native ARM64 build with ninja
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_CLANG_TIDY=OFF \
+            -DCMAKE_MAKE_PROGRAM=ninja \
+            -G Ninja \
             -DENABLE_CLI=ON \
             -DENABLE_DAEMON=ON \
-            -DENABLE_WEB=ON \
+            -DENABLE_WEB=OFF \
             -DENABLE_MAC=OFF \
             -DENABLE_WIN=OFF \
             -DENABLE_QT=OFF
