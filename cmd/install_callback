@@ -18,9 +18,9 @@ if ! chmod +x "$BIN_DIR/transmission-daemon" 2>/dev/null; then
 fi
 
 # 获取用户配置（从向导或环境变量）
-# 注意：安装时不从向导获取，保留默认值
-RPC_USERNAME="admin"
-RPC_PASSWORD="password"
+# 向导变量名: wizard_rpc_username, wizard_rpc_password
+RPC_USERNAME="${wizard_rpc_username:-${RPC_USERNAME:-admin}}"
+RPC_PASSWORD="${wizard_rpc_password:-${RPC_PASSWORD:-password}}"
 
 echo "Applying configuration..."
 echo "Username: ${RPC_USERNAME}"
@@ -35,8 +35,8 @@ fi
 # 创建配置目录
 mkdir -p "$DATA_DIR"
 
-# 生成配置文件
-        cat > "$CONFIG_DIR" << 'EOF'
+# 生成配置文件（使用 cat 配合 EOF 注入变量值）
+cat > "$CONFIG_DIR" << EOF
 {
     "download-dir": "/vol1/1000/downloads",
     "incomplete-dir": "/vol1/1000/temp",

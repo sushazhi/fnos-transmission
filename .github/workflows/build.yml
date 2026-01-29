@@ -18,7 +18,7 @@ on:
         default: "0.0.7"
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   APP_VERSION: 4.1.0
@@ -426,16 +426,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Release artifacts (for tags)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            ${{ env.PACKAGE_NAME }}
-            ${{ env.PACKAGE_NAME }}.sha256sum
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
 
       # - name: Commit binaries to repository
         #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'

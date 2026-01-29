@@ -8,10 +8,14 @@ ERROR_LOG="${TRIM_TEMP_LOGFILE:-/tmp/transmission-daemon_error.log}"
 
 APP_NAME="transmission-daemon"
 BIN_DIR="${TRIM_APPDEST}/bin"
+LIB_DIR="${TRIM_APPDEST}/lib"
 DATA_DIR="${TRIM_PKGVAR}"
 CONFIG_DIR="${DATA_DIR}/settings.json"
 PID_FILE="${TRIM_PKGTMP}/${APP_NAME}.pid"
 LOG_FILE="${TRIM_PKGVAR}/${APP_NAME}.log"
+
+# 设置库路径
+export LD_LIBRARY_PATH="${LIB_DIR}:${LD_LIBRARY_PATH}"
 
 # 端口配置
 if [ -n "$TRIM_SERVICE_PORT" ]; then
@@ -62,9 +66,15 @@ start() {
     # 只在配置文件不存在时创建
     if [ ! -f "$CONFIG_DIR" ]; then
         echo "创建默认配置..."
-        mkdir -p "$(dirname "$CONFIG_DIR")"
-        
-        cat > "$CONFIG_DIR" << 'EOF'
+        if ! mkdir -p "$(dirname "$CONFIG_DIR")"; then
+            error_exit "错误：无法创建配置目录 $(dirname "$CONFIG_DIR")"
+        fi
+
+        # 从环境变量读取或使用默认值
+        RPC_USERNAME="${RPC_USERNAME:-admin}"
+        RPC_PASSWORD="${RPC_PASSWORD:-password}"
+
+        if ! cat > "$CONFIG_DIR" << EOF
 {
     "download-dir": "/vol1/1000/downloads",
     "incomplete-dir": "/vol1/1000/temp",
@@ -80,12 +90,16 @@ start() {
     "rpc-authentication-required": true,
     "rpc-port": ${WEBUI_PORT},
     "rpc-url": "/transmission/",
-    "rpc-username": "admin",
-    "rpc-password": "password",
+    "rpc-username": "${RPC_USERNAME}",
+    "rpc-password": "${RPC_PASSWORD}",
     "start-added-torrents": true,
     "utp-enabled": true
 }
 EOF
+        then
+            error_exit "错误：无法写入配置文件 $CONFIG_DIR"
+        fi
+
         echo "默认配置已创建于 $CONFIG_DIR"
     fi
 

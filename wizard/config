@@ -1,30 +1,5 @@
 [
   {
-    "stepTitle": "🚀 安装 Transmission",
-    "items": [
-      {
-        "type": "tips",
-        "helpText": "✨ <b>轻量级BitTorrent下载工具</b>，默认启用WebUI现代界面"
-      },
-      {
-        "type": "tips",
-        "helpText": "📡 <b>核心功能：</b>磁力链接、种子文件、DHT/PEX/LSD P2P网络、速度控制"
-      },
-      {
-        "type": "tips",
-        "helpText": "🌐 <b>访问地址：</b>http://<NAS_IP>:9090/transmission/"
-      },
-      {
-        "type": "tips",
-        "helpText": "🔐 <b>默认凭证：</b>用户名: admin，密码: password"
-      },
-      {
-        "type": "tips",
-        "helpText": "🐛 <b>问题反馈：</b><a href='https://github.com/sushazhi/fnos-transmission/issues' target='_blank'>GitHub Issues</a>"
-      }
-    ]
-  },
-  {
     "stepTitle": "🔐 配置访问凭证",
     "items": [
       {

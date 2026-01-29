@@ -7,12 +7,13 @@ set -e
 APP_NAME="transmission-daemon"
 DATA_DIR="${TRIM_PKGVAR}"
 CONFIG_DIR="${DATA_DIR}/settings.json"
+ERROR_LOG="${TRIM_TEMP_LOGFILE:-/tmp/${APP_NAME}_error.log}"
 
 echo "正在应用 Transmission 配置..."
 
 # 检查配置目录
 if [ -z "$DATA_DIR" ]; then
-    echo "错误：TRIM_PKGVAR 环境变量未设置"
+    echo "错误：TRIM_PKGVAR 环境变量未设置" > "$ERROR_LOG"
     exit 1
 fi
 
@@ -20,8 +21,15 @@ fi
 mkdir -p "$DATA_DIR"
 
 # 获取用户配置（从向导或环境变量）
-RPC_USERNAME="${wizard_rpc_username:-admin}"
-RPC_PASSWORD="${wizard_rpc_password:-password}"
+RPC_USERNAME="${wizard_rpc_username:-${RPC_USERNAME:-admin}}"
+RPC_PASSWORD="${wizard_rpc_password:-${RPC_PASSWORD:-password}}"
+
+# 获取端口配置
+if [ -n "$TRIM_SERVICE_PORT" ]; then
+    WEBUI_PORT="$TRIM_SERVICE_PORT"
+else
+    WEBUI_PORT=9090
+fi
 
 # 读取现有配置或创建新配置
 if [ -f "$CONFIG_DIR" ]; then
@@ -45,7 +53,7 @@ cat > "$CONFIG_DIR" << EOF
     "peer-port-random-on-start": true,
     "rpc-enabled": true,
     "rpc-authentication-required": true,
-    "rpc-port": 9090,
+    "rpc-port": ${WEBUI_PORT},
     "rpc-url": "/transmission/",
     "rpc-username": "${RPC_USERNAME}",
     "rpc-password": "${RPC_PASSWORD}",
