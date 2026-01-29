@@ -64,7 +64,7 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.webui_version }}" ]; then
             WEBUI_VERSION="${{ github.event.inputs.webui_version }}"
           elif [ "${{ env.WEBUI_VERSION }}" = "latest" ]; then
-            WEBUI_VERSION=$(curl -s https://api.github.com/repos/jianxcao/transmission-web/releases/latest | grep -o "tag_name.*" | head -1 | sed 's/.*"v\([^"]*\)".*//')
+            WEBUI_VERSION=$(curl -s https://api.github.com/repos/jianxcao/transmission-web/releases/latest | sed -n "s/.*tag_name.:.v\([^"]*\).*//p")
           else
             WEBUI_VERSION="${{ env.WEBUI_VERSION }}"
           fi
@@ -341,7 +341,7 @@ jobs:
           **Version:** ${{ env.APP_VERSION }}
           **Transmission Version:** ${{ steps.versions.outputs.TRANSMISSION_VERSION }}
           **WebUI Version:** ${{ steps.versions.outputs.WEBUI_VERSION }}
-          **Architecture:** ${{ matrix.arch }}
+          **Architecture:** arm64
 
           **Build Method:** ${BUILD_METHOD}
           ${CACHE_INFO}
@@ -447,66 +447,3 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-
-
-
-      # - name: Commit binaries to repository
-        #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        #   run: |
-        #     # Configure git
-        #     git config user.name "github-actions[bot]"
-        #     git config user.email "github-actions[bot]@users.noreply.github.com"
-        #
-        #     # Get target branch
-        #     TARGET_BRANCH="main"
-        #     echo "Target branch: ${TARGET_BRANCH}"
-        #
-        #     # Fetch latest changes
-        #     git fetch origin ${TARGET_BRANCH}
-        #
-        #     # Create builds directory
-        #     mkdir -p builds
-        #
-        #     # Copy binaries to builds directory
-        #     if [ -f "app/bin/transmission-daemon" ]; then
-        #       cp app/bin/transmission-daemon builds/
-        #       echo "Copied transmission-daemon to builds/"
-        #     fi
-        #
-        #     # Copy CLI tools if available
-        #     for tool in transmission-cli transmission-remote; do
-        #       if [ -f "app/bin/$tool" ]; then
-        #         cp app/bin/$tool builds/
-        #         echo "Copied $tool to builds/"
-        #       fi
-        #     done
-        #
-        #     # Create version info file
-        #     cat > builds/VERSION << EOF
-        #     TRANSMISSION_VERSION=${{ steps.versions.outputs.TRANSMISSION_VERSION }}
-        #     WEBUI_VERSION=${{ steps.versions.outputs.WEBUI_VERSION }}
-        #     APP_VERSION=${{ env.APP_VERSION }}
-        #     ARCH=arm64
-        #     BUILT_AT=$(date -u +%Y-%m-%d-%H:%M:%S)
-        #     COMMIT=${{ github.sha }}
-        #     EOF
-        #
-        #     echo "Created VERSION file"
-        #     cat builds/VERSION
-        #
-        #     # List files to be committed
-        #     echo ""
-        #     echo "Files in builds/:"
-        #     ls -lh builds/
-        #
-        #     # Add and commit
-        #     git add -f builds/
-        #     git merge --no-edit origin/${TARGET_BRANCH} || true
-        #
-        #     echo "ci: add build artifacts $(date -u +%Y-%m-%d)" > /tmp/commit_msg.txt
-        #     git commit -F /tmp/commit_msg.txt
-        #
-        #     # Push to main branch
-        #     git push https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git HEAD:${TARGET_BRANCH}
-        #   env:
-        #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
