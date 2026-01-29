@@ -185,13 +185,12 @@ jobs:
 
           # Configure for native ARM64 build - use GCC to avoid clang-tidy crash
           export CC=gcc CXX=g++
-          export LDFLAGS="-static-libgcc -static-libstdc++"
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=gcc \
             -DCMAKE_CXX_COMPILER=g++ \
             -DRUN_CLANG_TIDY=OFF \
-            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_SHARED_LIBS=ON \
             -DENABLE_CLI=ON \
             -DENABLE_DAEMON=ON \
             -DENABLE_WEB=OFF \
@@ -201,9 +200,7 @@ jobs:
             -DENABLE_WIN=OFF \
             -DENABLE_TESTS=OFF \
             -DUSE_SYSTEMD=OFF \
-            -DENABLE_LIBUPNP=ON \
-            -DSTATIC_LIBUPNP=ON \
-            -DCMAKE_EXE_LINKER_FLAGS="-static"
+            -DENABLE_LIBUPNP=ON
 
           echo ""
           echo "CMake configured successfully"
