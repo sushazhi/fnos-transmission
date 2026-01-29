@@ -91,9 +91,8 @@ jobs:
             echo "Cached build date: ${BUILT_AT}"
 
             # Compare with requested versions
-            if [ "${TRANSMISSION_VERSION}" = "${VERSION}" ] && \
-               [ "${WEBUI_VERSION}" = "${{ steps.versions.outputs.WEBUI_VERSION }}" ]; then
-              echo "✅ Cached binaries match requested versions!"
+            if [ "${TRANSMISSION_VERSION}" = "${VERSION}" ]; then
+              echo "✅ Cached Transmission binaries match requested version!"
               echo "USE_CACHE=true" >> $GITHUB_OUTPUT
               echo "CACHED_AT=${BUILT_AT}" >> $GITHUB_OUTPUT
               echo "CACHE_DIR=builds/${VERSION}" >> $GITHUB_OUTPUT
