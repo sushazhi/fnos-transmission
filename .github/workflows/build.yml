@@ -262,17 +262,19 @@ jobs:
 
           # Copy libminiupnpc shared library for self-contained deployment
           mkdir -p app/lib
-          find /usr/lib -name "libminiupnpc.so*" -type f -exec cp {} app/lib/ \; 2>/dev/null || true
-          if [ -f "app/lib/libminiupnpc.so"* ]; then
-            echo "Copied libminiupnpc shared library:"
-            ls -la app/lib/
+          libminiupnpc=$(find /usr/lib -name "libminiupnpc.so.*" -type f 2>/dev/null | head -1)
+          if [ -n "$libminiupnpc" ] && [ -f "$libminiupnpc" ]; then
+            cp "$libminiupnpc" app/lib/
+            echo "Copied libminiupnpc: $(ls app/lib/)"
+          else
+            echo "WARNING: libminiupnpc not found, binary may not run"
           fi
 
           echo "App structure prepared:"
           echo "Binaries:"
           ls -lh app/bin/
-          echo "WebUI:"
-          ls -la app/ui/ | head -10
+          echo "Libraries:"
+          ls -la app/lib/ 2>/dev/null || echo "(no libs)"
 
       - name: Verify binary
         run: |
@@ -362,6 +364,67 @@ jobs:
           - Auto theme detection
           - Enhanced user experience
           EOF
+
+      - name: Commit binaries to repository
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Get target branch
+          TARGET_BRANCH="main"
+          echo "Target branch: ${TARGET_BRANCH}"
+
+          # Fetch latest changes
+          git fetch origin ${TARGET_BRANCH}
+
+          # Create builds directory
+          mkdir -p builds
+
+          # Copy binaries to builds directory
+          if [ -f "app/bin/transmission-daemon" ]; then
+            cp app/bin/transmission-daemon builds/
+            echo "Copied transmission-daemon to builds/"
+          fi
+
+          # Copy CLI tools if available
+          for tool in transmission-cli transmission-remote; do
+            if [ -f "app/bin/$tool" ]; then
+              cp app/bin/$tool builds/
+              echo "Copied $tool to builds/"
+            fi
+          done
+
+          # Create version info file
+          cat > builds/VERSION << EOF
+          TRANSMISSION_VERSION=${{ steps.versions.outputs.TRANSMISSION_VERSION }}
+          WEBUI_VERSION=${{ steps.versions.outputs.WEBUI_VERSION }}
+          APP_VERSION=${{ env.APP_VERSION }}
+          ARCH=arm64
+          BUILT_AT=$(date -u +%Y-%m-%d-%H:%M:%S)
+          COMMIT=${{ github.sha }}
+          EOF
+
+          echo "Created VERSION file"
+          cat builds/VERSION
+
+          # List files to be committed
+          echo ""
+          echo "Files in builds/:"
+          ls -lh builds/
+
+          # Add and commit
+          git add -f builds/
+          git merge --no-edit origin/${TARGET_BRANCH} || true
+
+          echo "ci: add build artifacts $(date -u +%Y-%m-%d)" > /tmp/commit_msg.txt
+          git commit -F /tmp/commit_msg.txt
+
+          # Push to main branch
+          git push https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git HEAD:${TARGET_BRANCH}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Release artifacts (for tags)
         if: startsWith(github.ref, 'refs/tags/v')
