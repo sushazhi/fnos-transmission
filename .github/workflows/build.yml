@@ -47,6 +47,7 @@ jobs:
             libcurl4-openssl-dev \
             zlib1g-dev \
             libminiupnpc-dev \
+            libminiupnpc-static \
             libappindicator3-dev \
             git \
             wget \
@@ -199,7 +200,9 @@ jobs:
             -DENABLE_MAC=OFF \
             -DENABLE_WIN=OFF \
             -DENABLE_TESTS=OFF \
-            -DUSE_SYSTEMD=OFF
+            -DUSE_SYSTEMD=OFF \
+            -DENABLE_LIBUPNP=ON \
+            -DSTATIC_LIBUPNP=ON
 
           echo ""
           echo "CMake configured successfully"
