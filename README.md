@@ -102,4 +102,4 @@ transmission-fnos/
 
 ---
 
-基于 [Transmission](https://github.com/transmission/transmission) 和 [transmission-web](https://github.com/jianxcao/transmission-web) 开源。
+感谢 [Transmission](https://github.com/transmission/transmission) 和 [transmission-web](https://github.com/jianxcao/transmission-web) 开源项目的支持。

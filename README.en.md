@@ -102,4 +102,4 @@ Data is automatically backed up and restored during upgrades to the shares direc
 
 ---
 
-Based on [Transmission](https://github.com/transmission/transmission) and [transmission-web](https://github.com/jianxcao/transmission-web) open source.
+Thanks to [Transmission](https://github.com/transmission/transmission) and [transmission-web](https://github.com/jianxcao/transmission-web) open source projects for their support.
