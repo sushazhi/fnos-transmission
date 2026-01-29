@@ -40,11 +40,11 @@
         "required": true
       },
       {
-        "type": "password",
+        "type": "input",
         "name": "rpc_password",
         "label": "密码",
         "default": "password",
-        "placeholder": "请输入密码",
+        "placeholder": "请输入密码（将以掩码显示）",
         "required": true
       },
       {
