@@ -365,7 +365,7 @@ jobs:
           - Enhanced user experience
           EOF
 
-      - name: Commit binaries to repository
+      - name: Commit binaries and fpk to repository
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           # Configure git
@@ -379,10 +379,10 @@ jobs:
           # Fetch latest changes
           git fetch origin ${TARGET_BRANCH}
 
-          # Create builds directory
-          mkdir -p builds
+          # Create builds and artifacts directories
+          mkdir -p builds artifacts
 
-          # Copy binaries to builds directory
+          # ===== Copy binaries to builds/ =====
           if [ -f "app/bin/transmission-daemon" ]; then
             cp app/bin/transmission-daemon builds/
             echo "Copied transmission-daemon to builds/"
@@ -396,7 +396,7 @@ jobs:
             fi
           done
 
-          # Create version info file
+          # Create VERSION file
           cat > builds/VERSION << EOF
           TRANSMISSION_VERSION=${{ steps.versions.outputs.TRANSMISSION_VERSION }}
           WEBUI_VERSION=${{ steps.versions.outputs.WEBUI_VERSION }}
@@ -409,13 +409,32 @@ jobs:
           echo "Created VERSION file"
           cat builds/VERSION
 
+          # ===== Copy fpk to artifacts/ =====
+          FPK_NAME="transmission-${{ env.APP_VERSION }}-arm64.fpk"
+          FPK_CHECKSUM="${FPK_NAME}.sha256sum"
+
+          if [ -f "$FPK_NAME" ]; then
+            cp "$FPK_NAME" artifacts/
+            echo "Copied $FPK_NAME to artifacts/"
+          else
+            echo "Warning: $FPK_NAME not found"
+          fi
+
+          if [ -f "$FPK_CHECKSUM" ]; then
+            cp "$FPK_CHECKSUM" artifacts/
+            echo "Copied $FPK_CHECKSUM to artifacts/"
+          fi
+
           # List files to be committed
           echo ""
           echo "Files in builds/:"
           ls -lh builds/
+          echo ""
+          echo "Files in artifacts/:"
+          ls -lh artifacts/
 
           # Add and commit
-          git add -f builds/
+          git add -f builds/ artifacts/
           git merge --no-edit origin/${TARGET_BRANCH} || true
 
           echo "ci: add build artifacts $(date -u +%Y-%m-%d)" > /tmp/commit_msg.txt
