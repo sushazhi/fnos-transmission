@@ -44,7 +44,6 @@ jobs:
             ninja-build \
             pkg-config \
             libssl-dev \
-            libssl-static \
             libcurl4-openssl-dev \
             zlib1g-dev \
             libminiupnpc-dev \
