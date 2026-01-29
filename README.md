@@ -1,7 +1,7 @@
 # Transmission for fnOS 🚀
 
 [![Transmission Version](https://img.shields.io/badge/Transmission-4.1.0-blue?style=flat-square)](https://github.com/transmission/transmission/releases)
-[![WebUI Version](https://img.shields.io/badge/WebUI-0.0.7-green?style=flat-square)](https://github.com/jianxcao/transmission-web/releases)
+[![WebUI Version](https://img.shields.io/badge/WebUI-0.0.8-green?style=flat-square)](https://github.com/jianxcao/transmission-web/releases)
 [![Platform](https://img.shields.io/badge/Platform-fnOS-green?style=flat-square)](https://www.fnnas.com/)
 [![License](https://img.shields.io/badge/License-GPL--2.0-blue?style=flat-square)](https://www.gnu.org/licenses/gpl-2.0.html)
 
@@ -81,7 +81,7 @@ transmission-fnos/
 | 项目 | 版本 | 用途 | 许可证 |
 |------|------|------|--------|
 | [Transmission](https://github.com/transmission/transmission) | 4.1.0 | BitTorrent 客户端核心 | [GPL-2.0](https://www.gnu.org/licenses/gpl-2.0.html) |
-| [transmission-web](https://github.com/jianxcao/transmission-web) | 0.0.7 | WebUI 界面 | [MIT](https://opensource.org/licenses/MIT) |
+| [transmission-web](https://github.com/jianxcao/transmission-web) | 0.0.8 | WebUI 界面 | [MIT](https://opensource.org/licenses/MIT) |
 
 ---
 

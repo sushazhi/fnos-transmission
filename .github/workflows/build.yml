@@ -64,7 +64,7 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.webui_version }}" ]; then
             WEBUI_VERSION="${{ github.event.inputs.webui_version }}"
           elif [ "${{ env.WEBUI_VERSION }}" = "latest" ]; then
-            WEBUI_VERSION=$(curl -s https://api.github.com/repos/jianxcao/transmission-web/releases/latest | grep -o '"'"'tag_name": "v[^"]*'"'"' | cut -d'"'"'"'"' -f4)
+            WEBUI_VERSION=$(curl -s https://api.github.com/repos/jianxcao/transmission-web/releases/latest | grep -o "tag_name.*" | head -1 | sed 's/.*"v\([^"]*\)".*//')
           else
             WEBUI_VERSION="${{ env.WEBUI_VERSION }}"
           fi
