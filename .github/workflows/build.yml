@@ -44,6 +44,7 @@ jobs:
             ninja-build \
             pkg-config \
             libssl-dev \
+            libssl-static \
             libcurl4-openssl-dev \
             zlib1g-dev \
             libminiupnpc-dev \
@@ -186,6 +187,7 @@ jobs:
 
           # Configure for native ARM64 build - use GCC to avoid clang-tidy crash
           export CC=gcc CXX=g++
+          export LDFLAGS="-static-libgcc -static-libstdc++"
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=gcc \
@@ -202,7 +204,8 @@ jobs:
             -DENABLE_TESTS=OFF \
             -DUSE_SYSTEMD=OFF \
             -DENABLE_LIBUPNP=ON \
-            -DSTATIC_LIBUPNP=ON
+            -DSTATIC_LIBUPNP=ON \
+            -DCMAKE_EXE_LINKER_FLAGS="-static"
 
           echo ""
           echo "CMake configured successfully"
