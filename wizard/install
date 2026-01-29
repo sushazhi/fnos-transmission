@@ -1,6 +1,6 @@
 [
   {
-    "stepTitle": "🚀 欢迎安装 Transmission",
+    "stepTitle": "🚀 安装 Transmission",
     "items": [
       {
         "type": "tips",
@@ -12,37 +12,15 @@
       },
       {
         "type": "tips",
-        "helpText": "🎨 <b>WebUI设计：</b>简洁现代，响应式设计，支持深色模式"
-      },
-      {
-        "type": "tips",
-        "helpText": "🔐 <b>访问信息：</b>地址 http://<NAS_IP>:9090/transmission/"
-      },
-      {
-        "type": "tips",
-        "helpText": "🐛 <b>问题反馈：</b><a href='https://github.com/sushazhi/fnos-transmission/issues' target='_blank'>GitHub Issues</a>"
-      }
-    ]
-  },
-
-  {
-    "stepTitle": "📋 安装确认",
-    "items": [
-      {
-        "type": "tips",
-        "helpText": "✅ <b>准备就绪！</b>点击右下角安装按钮开始部署"
-      },
-      {
-        "type": "tips",
-        "helpText": "📦 <b>安装内容：</b>Transmission核心、WebUI界面、配置文件"
-      },
-      {
-        "type": "tips",
         "helpText": "🌐 <b>访问地址：</b>http://<NAS_IP>:9090/transmission/"
       },
       {
         "type": "tips",
         "helpText": "🔐 <b>默认凭证：</b>用户名: admin，密码: password"
+      },
+      {
+        "type": "tips",
+        "helpText": "🐛 <b>问题反馈：</b><a href='https://github.com/sushazhi/fnos-transmission/issues' target='_blank'>GitHub Issues</a>"
       }
     ]
   }

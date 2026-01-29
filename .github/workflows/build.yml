@@ -48,7 +48,6 @@ jobs:
             libcurl4-openssl-dev \
             zlib1g-dev \
             libminiupnpc-dev \
-            libminiupnpc-static \
             libappindicator3-dev \
             git \
             wget \
@@ -264,6 +263,14 @@ jobs:
 
           # Remove transmission subfolder if it exists
           rm -rf app/ui/transmission 2>/dev/null || true
+
+          # Copy libminiupnpc shared library for self-contained deployment
+          mkdir -p app/lib
+          find /usr/lib -name "libminiupnpc.so*" -type f -exec cp {} app/lib/ \; 2>/dev/null || true
+          if [ -f "app/lib/libminiupnpc.so"* ]; then
+            echo "Copied libminiupnpc shared library:"
+            ls -la app/lib/
+          fi
 
           echo "App structure prepared:"
           echo "Binaries:"
