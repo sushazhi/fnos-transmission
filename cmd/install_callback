@@ -52,6 +52,8 @@ cat > "$CONFIG_DIR" << EOF
     "rpc-authentication-required": true,
     "rpc-port": ${WEBUI_PORT},
     "rpc-url": "/transmission/",
+    "rpc-host-whitelist-enabled": false,
+    "rpc-whitelist-enabled": false,
     "rpc-username": "${RPC_USERNAME}",
     "rpc-password": "${RPC_PASSWORD}",
     "start-added-torrents": true,
@@ -67,9 +69,6 @@ echo ""
 echo "WebUI: http://<NAS_IP>:9090/transmission/"
 echo ""
 echo "Username: ${RPC_USERNAME}"
-echo "Password: ${RPC_PASSWORD}"
-echo ""
-echo "⚠️  Important: Change the default password after first login!"
 echo ""
 echo "Data location: $DATA_DIR"
 echo "Config location: $CONFIG_DIR"

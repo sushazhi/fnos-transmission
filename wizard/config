@@ -10,14 +10,13 @@
         "type": "text",
         "field": "wizard_rpc_username",
         "label": "用户名",
-        "initValue": "admin",
         "rules": [
           {
             "required": true,
             "message": "请输入用户名"
           },
           {
-            "min": 3,
+            "min": 2,
             "max": 20,
             "message": "用户名长度应在3-20个字符之间"
           },
@@ -42,10 +41,7 @@
           }
         ]
       },
-      {
-        "type": "tips",
-        "helpText": "⚠️ <b>安全提醒：</b>安装后请及时修改默认密码，确保使用强密码"
-      }
+      {}
     ]
   }
 ]

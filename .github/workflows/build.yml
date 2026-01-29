@@ -23,7 +23,7 @@ permissions:
 env:
   APP_VERSION: 4.1.0
   TRANSMISSION_VERSION: 4.1.0
-  WEBUI_VERSION: 0.0.7
+  WEBUI_VERSION: latest
   ARCH: arm64
 
 jobs:

@@ -13,9 +13,11 @@ DATA_DIR="${TRIM_PKGVAR}"
 CONFIG_DIR="${DATA_DIR}/settings.json"
 PID_FILE="${TRIM_PKGTMP}/${APP_NAME}.pid"
 LOG_FILE="${TRIM_PKGVAR}/${APP_NAME}.log"
+UI_DIR="${TRIM_APPDEST}/ui"
 
-# 设置库路径
+# 设置库路径和 WebUI 路径
 export LD_LIBRARY_PATH="${LIB_DIR}:${LD_LIBRARY_PATH}"
+export TRANSMISSION_WEB_HOME="${UI_DIR}"
 
 # 端口配置
 if [ -n "$TRIM_SERVICE_PORT" ]; then
@@ -90,6 +92,8 @@ start() {
     "rpc-authentication-required": true,
     "rpc-port": ${WEBUI_PORT},
     "rpc-url": "/transmission/",
+    "rpc-host-whitelist-enabled": false,
+    "rpc-whitelist-enabled": false,
     "rpc-username": "${RPC_USERNAME}",
     "rpc-password": "${RPC_PASSWORD}",
     "start-added-torrents": true,
