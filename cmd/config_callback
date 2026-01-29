@@ -9,6 +9,9 @@ DATA_DIR="${TRIM_PKGVAR}"
 CONFIG_DIR="${DATA_DIR}/settings.json"
 ERROR_LOG="${TRIM_TEMP_LOGFILE:-/tmp/${APP_NAME}_error.log}"
 
+# 获取脚本目录
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 echo "正在应用 Transmission 配置..."
 
 # 检查配置目录
@@ -16,6 +19,10 @@ if [ -z "$DATA_DIR" ]; then
     echo "错误：TRIM_PKGVAR 环境变量未设置" > "$ERROR_LOG"
     exit 1
 fi
+
+# 先停止应用
+echo "停止应用以应用新配置..."
+"$SCRIPT_DIR/main" stop || true
 
 # 创建配置目录
 mkdir -p "$DATA_DIR"
@@ -73,6 +80,13 @@ echo "用户名: ${RPC_USERNAME}"
 echo ""
 echo "WebUI: http://<NAS_IP>:9090/transmission/"
 echo ""
+
+# 启动服务以应用新配置
+echo "启动服务以应用新配置..."
+if ! "$SCRIPT_DIR/main" start; then
+    echo "错误：服务启动失败" > "$ERROR_LOG"
+    exit 1
+fi
 
 echo "Transmission 配置应用完成"
 exit 0
