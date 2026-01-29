@@ -55,6 +55,8 @@ cat > "$CONFIG_DIR" << EOF
     "rpc-authentication-required": true,
     "rpc-port": ${WEBUI_PORT},
     "rpc-url": "/transmission/",
+    "rpc-host-whitelist-enabled": false,
+    "rpc-whitelist-enabled": false,
     "rpc-username": "${RPC_USERNAME}",
     "rpc-password": "${RPC_PASSWORD}",
     "start-added-torrents": true,
