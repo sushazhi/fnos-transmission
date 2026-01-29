@@ -77,24 +77,26 @@ jobs:
         id: check_cache
         run: |
           echo "Checking for cached binaries..."
-
-          # Check if VERSION file exists in builds/
-          if [ -f "builds/VERSION" ]; then
-            echo "Found cached VERSION file"
+          VERSION="${{ steps.versions.outputs.TRANSMISSION_VERSION }}"
+          
+          # Check if VERSION file exists in builds/{VERSION}/
+          if [ -f "builds/${VERSION}/VERSION" ]; then
+            echo "Found cached VERSION file in builds/${VERSION}/"
 
             # Read cached versions
-            source builds/VERSION
+            source builds/${VERSION}/VERSION
 
             echo "Cached Transmission version: ${TRANSMISSION_VERSION}"
             echo "Cached WebUI version: ${WEBUI_VERSION}"
             echo "Cached build date: ${BUILT_AT}"
 
             # Compare with requested versions
-            if [ "${TRANSMISSION_VERSION}" = "${{ steps.versions.outputs.TRANSMISSION_VERSION }}" ] && \
+            if [ "${TRANSMISSION_VERSION}" = "${VERSION}" ] && \
                [ "${WEBUI_VERSION}" = "${{ steps.versions.outputs.WEBUI_VERSION }}" ]; then
               echo "✅ Cached binaries match requested versions!"
               echo "USE_CACHE=true" >> $GITHUB_OUTPUT
               echo "CACHED_AT=${BUILT_AT}" >> $GITHUB_OUTPUT
+              echo "CACHE_DIR=builds/${VERSION}" >> $GITHUB_OUTPUT
             else
               echo "⚠️ Cached versions don't match, will rebuild"
               echo "USE_CACHE=false" >> $GITHUB_OUTPUT
@@ -110,10 +112,10 @@ jobs:
           echo "✅ Using cached binaries from ${{ steps.check_cache.outputs.CACHED_AT }}"
           echo ""
           echo "Cached binary info:"
-          ls -lh builds/
+          ls -lh ${{ steps.check_cache.outputs.CACHE_DIR }}/
 
           # Verify binaries exist
-          if [ ! -f "builds/transmission-daemon" ]; then
+          if [ ! -f "${{ steps.check_cache.outputs.CACHE_DIR }}/transmission-daemon" ]; then
             echo "❌ Cached binary missing, falling back to build"
             echo "USE_CACHE=false" >> $GITHUB_ENV
             exit 1
@@ -121,14 +123,14 @@ jobs:
 
           # Copy cached binaries to app/bin
           mkdir -p app/bin
-          cp builds/transmission-daemon app/bin/
+          cp ${{ steps.check_cache.outputs.CACHE_DIR }}/transmission-daemon app/bin/
 
-          if [ -f "builds/transmission-cli" ]; then
-            cp builds/transmission-cli app/bin/
+          if [ -f "${{ steps.check_cache.outputs.CACHE_DIR }}/transmission-cli" ]; then
+            cp ${{ steps.check_cache.outputs.CACHE_DIR }}/transmission-cli app/bin/
           fi
 
-          if [ -f "builds/transmission-remote" ]; then
-            cp builds/transmission-remote app/bin/
+          if [ -f "${{ steps.check_cache.outputs.CACHE_DIR }}/transmission-remote" ]; then
+            cp ${{ steps.check_cache.outputs.CACHE_DIR }}/transmission-remote app/bin/
           fi
 
           chmod +x app/bin/*
@@ -384,22 +386,25 @@ jobs:
           # Create builds and artifacts directories
           mkdir -p builds artifacts
 
-          # ===== Copy binaries to builds/ =====
+          # ===== Copy binaries to builds/{VERSION}/ =====
+          VERSION_DIR="builds/${{ steps.versions.outputs.TRANSMISSION_VERSION }}"
+          mkdir -p "$VERSION_DIR"
+          
           if [ -f "app/bin/transmission-daemon" ]; then
-            cp app/bin/transmission-daemon builds/
-            echo "Copied transmission-daemon to builds/"
+            cp app/bin/transmission-daemon "$VERSION_DIR/"
+            echo "Copied transmission-daemon to $VERSION_DIR/"
           fi
 
           # Copy CLI tools if available
           for tool in transmission-cli transmission-remote; do
             if [ -f "app/bin/$tool" ]; then
-              cp app/bin/$tool builds/
-              echo "Copied $tool to builds/"
+              cp app/bin/$tool "$VERSION_DIR/"
+              echo "Copied $tool to $VERSION_DIR/"
             fi
           done
 
           # Create VERSION file
-          cat > builds/VERSION << EOF
+          cat > "$VERSION_DIR/VERSION" << EOF
           TRANSMISSION_VERSION=${{ steps.versions.outputs.TRANSMISSION_VERSION }}
           WEBUI_VERSION=${{ steps.versions.outputs.WEBUI_VERSION }}
           APP_VERSION=${{ env.APP_VERSION }}
@@ -409,7 +414,7 @@ jobs:
           EOF
 
           echo "Created VERSION file"
-          cat builds/VERSION
+          cat "$VERSION_DIR/VERSION"
 
           # ===== Copy fpk to artifacts/ =====
           FPK_NAME="transmission-${{ env.APP_VERSION }}-arm64.fpk"
@@ -429,10 +434,10 @@ jobs:
 
           # List files to be committed
           echo ""
-          echo "Files in builds/:"
-          ls -lh builds/
+          echo "Files in $VERSION_DIR/:'"
+          ls -lh "$VERSION_DIR/"
           echo ""
-          echo "Files in artifacts/:"
+          echo "Files in artifacts/:'"
           ls -lh artifacts/
 
           # Add and commit
