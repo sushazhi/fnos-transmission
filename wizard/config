@@ -1,0 +1,37 @@
+[
+  {
+    "stepTitle": "🔑 配置访问凭证",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "💡 <b>设置WebUI访问用户名和密码</b>"
+      },
+      {
+        "type": "input",
+        "field": "wizard_rpc_username",
+        "label": "用户名",
+        "rules": [
+          {
+            "required": true,
+            "message": "请输入用户名"
+          }
+        ]
+      },
+      {
+        "type": "password",
+        "field": "wizard_rpc_password",
+        "label": "新密码",
+        "rules": [
+          {
+            "min": 6,
+            "message": "密码长度不能少于6位"
+          }
+        ]
+      },
+      {
+        "type": "tips",
+        "helpText": "⚠️ <b>安全提醒：</b>建议使用强密码，定期更换"
+      }
+    ]
+  }
+]

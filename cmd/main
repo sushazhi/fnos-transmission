@@ -64,16 +64,6 @@ start() {
         echo "创建默认配置..."
         mkdir -p "$(dirname "$CONFIG_DIR")"
         
-        # 生成加密密码
-        generate_encrypted_password() {
-            local plain_password="$1"
-            local salt=$(head -c 7 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 7)
-            local hash=$(echo -n "${plain_password}${salt}" | sha1sum | cut -d' ' -f1)
-            echo "{${hash}${salt}}"
-        }
-        
-        ENCRYPTED_PASSWORD=$(generate_encrypted_password "password")
-        
         cat > "$CONFIG_DIR" << 'EOF'
 {
     "download-dir": "/vol1/1000/downloads",
@@ -91,7 +81,7 @@ start() {
     "rpc-port": ${WEBUI_PORT},
     "rpc-url": "/transmission/",
     "rpc-username": "admin",
-    "rpc-password": "${ENCRYPTED_PASSWORD}",
+    "rpc-password": "password",
     "start-added-torrents": true,
     "utp-enabled": true
 }

@@ -224,7 +224,7 @@ jobs:
 
       - name: Prepare app structure
         run: |
-          mkdir -p app/src/build app/bin app/ui/transmission
+          mkdir -p app/src/build app/bin
 
           if [ "${{ steps.check_cache.outputs.USE_CACHE }}" = "true" ]; then
             echo "Using cached binaries..."
@@ -249,18 +249,21 @@ jobs:
             chmod +x app/bin/*
           fi
 
-          # Always copy WebUI (unless using cache with pre-copied webui)
+          # Always copy WebUI to app/ui/ (not app/ui/transmission/)
           if [ -d "/tmp/webui" ]; then
-            cp -r /tmp/webui/* app/ui/transmission/
+            cp -r /tmp/webui/* app/ui/
           else
             echo "WebUI not found, checking cache..."
           fi
-          
+
+          # Remove transmission subfolder if it exists
+          rm -rf app/ui/transmission 2>/dev/null || true
+
           echo "App structure prepared:"
           echo "Binaries:"
           ls -lh app/bin/
           echo "WebUI:"
-          ls -la app/ui/transmission/ | head -10
+          ls -la app/ui/ | head -10
 
       - name: Verify binary
         run: |
@@ -275,13 +278,13 @@ jobs:
           ls -lh "$BINARY"
           
           # Verify WebUI
-          if [ ! -f "app/ui/transmission/index.html" ]; then
-            echo "ERROR: WebUI index.html not found"
+          if [ ! -f "app/ui/index.html" ]; then
+            echo "ERROR: WebUI index.html not found at app/ui/index.html"
             exit 1
           fi
-          
+
           echo "WebUI verification:"
-          ls -la app/ui/transmission/ | head -5
+          ls -la app/ui/ | head -5
 
       - name: Download fnpack
         run: |

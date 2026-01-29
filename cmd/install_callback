@@ -18,21 +18,12 @@ if ! chmod +x "$BIN_DIR/transmission-daemon" 2>/dev/null; then
 fi
 
 # 获取用户配置（从向导或环境变量）
-RPC_USERNAME="${rpc_username:-admin}"
-RPC_PASSWORD="${rpc_password:-password}"
+# 注意：安装时不从向导获取，保留默认值
+RPC_USERNAME="admin"
+RPC_PASSWORD="password"
 
-# 生成加密密码 - Transmission格式: {SHA1(password + salt)salt}
-generate_encrypted_password() {
-    local plain_password="$1"
-    local salt=$(head -c 7 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 7)
-    local hash=$(echo -n "${plain_password}${salt}" | sha1sum | cut -d' ' -f1)
-    echo "{${hash}${salt}}"
-}
-
-echo "Applying configuration with encrypted password..."
-ENCRYPTED_PASSWORD=$(generate_encrypted_password "$RPC_PASSWORD")
+echo "Applying configuration..."
 echo "Username: ${RPC_USERNAME}"
-echo "Encrypted password: ${ENCRYPTED_PASSWORD}"
 
 # 获取端口配置
 if [ -n "$TRIM_SERVICE_PORT" ]; then
@@ -62,7 +53,7 @@ mkdir -p "$DATA_DIR"
     "rpc-port": ${WEBUI_PORT},
     "rpc-url": "/transmission/",
     "rpc-username": "${RPC_USERNAME}",
-    "rpc-password": "${ENCRYPTED_PASSWORD}",
+    "rpc-password": "${RPC_PASSWORD}",
     "start-added-torrents": true,
     "utp-enabled": true
 }
