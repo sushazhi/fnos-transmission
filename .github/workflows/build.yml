@@ -228,7 +228,7 @@ jobs:
 
       - name: Prepare app structure
         run: |
-          mkdir -p app/src/build app/bin
+          mkdir -p app/src/build app/bin app/ui
 
           if [ "${{ steps.check_cache.outputs.USE_CACHE }}" = "true" ]; then
             echo "Using cached binaries..."
@@ -253,11 +253,21 @@ jobs:
             chmod +x app/bin/*
           fi
 
-          # Always copy WebUI to app/ui/ (not app/ui/transmission/)
+          # Always ensure WebUI is available
           if [ -d "/tmp/webui" ]; then
             cp -r /tmp/webui/* app/ui/
           else
-            echo "WebUI not found, checking cache..."
+            echo "WebUI not found, downloading..."
+            # Download WebUI if not available
+            WEBUI_VERSION="${{ steps.versions.outputs.WEBUI_VERSION }}"
+            wget -q "https://github.com/jianxcao/transmission-web/releases/download/v${WEBUI_VERSION}/transmission-web-v${WEBUI_VERSION}.zip" -O /tmp/webui.zip
+            if [ -s /tmp/webui.zip ]; then
+              unzip -q /tmp/webui.zip -d /tmp/webui
+              cp -r /tmp/webui/* app/ui/
+            else
+              echo "ERROR: Failed to download WebUI"
+              exit 1
+            fi
           fi
 
           # Remove transmission subfolder if it exists
