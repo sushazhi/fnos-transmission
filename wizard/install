@@ -33,19 +33,29 @@
       },
       {
         "type": "input",
-        "name": "rpc_username",
+        "field": "rpc_username",
         "label": "用户名",
-        "default": "admin",
-        "placeholder": "请输入用户名",
-        "required": true
+        "rules": [
+          {
+            "required": true,
+            "message": "请输入用户名"
+          }
+        ]
       },
       {
-        "type": "input",
-        "name": "rpc_password",
-        "label": "密码",
-        "default": "password",
-        "placeholder": "请输入密码（将以掩码显示）",
-        "required": true
+        "type": "password",
+        "field": "rpc_password",
+        "label": "管理员密码",
+        "rules": [
+          {
+            "required": true,
+            "message": "请输入密码"
+          },
+          {
+            "min": 6,
+            "message": "密码长度不能少于6位"
+          }
+        ]
       },
       {
         "type": "tips",
