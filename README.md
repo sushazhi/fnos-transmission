@@ -84,6 +84,7 @@ fnos-transmission/
 │   ├── install             # 安装向导
 │   ├── upgrade             # 升级向导
 │   └── uninstall           # 卸载向导
+├── LICENSE                 # 项目许可证
 └── manifest                # 应用元数据
 ```
 
