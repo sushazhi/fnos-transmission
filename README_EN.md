@@ -84,6 +84,7 @@ fnos-transmission/
 │   ├── install             # Installation wizard
 │   ├── upgrade             # Upgrade wizard
 │   └── uninstall           # Uninstallation wizard
+├── LICENSE                 # Project license
 └── manifest                # App metadata
 ```
 
