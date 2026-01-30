@@ -2,10 +2,7 @@ name: Build Transmission for fnOS
 
 on:
   push:
-    branches: [main, develop]
     tags: [v*]
-  pull_request:
-    branches: [main, develop]
   workflow_dispatch:
     inputs:
       version:
@@ -15,7 +12,7 @@ on:
       webui_version:
         description: "WebUI version (e.g., 0.0.7)"
         required: false
-        default: "0.0.7"
+        default: "latest"
 
 permissions:
   contents: write
@@ -228,7 +225,7 @@ jobs:
 
       - name: Prepare app structure
         run: |
-          mkdir -p app/src/build app/bin app/ui
+          mkdir -p app/bin app/ui
 
           if [ "${{ steps.check_cache.outputs.USE_CACHE }}" = "true" ]; then
             echo "Using cached binaries..."
