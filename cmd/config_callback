@@ -1,0 +1,92 @@
+#!/bin/bash
+# cmd/config_callback - Transmission配置回调脚本
+# 功能：应用或更新用户配置的用户名密码
+
+set -e
+
+APP_NAME="transmission-daemon"
+DATA_DIR="${TRIM_PKGVAR}"
+CONFIG_DIR="${DATA_DIR}/settings.json"
+
+# 获取脚本目录
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+echo "正在应用 Transmission 配置..."
+
+# 检查配置目录
+if [ -z "$DATA_DIR" ]; then
+    echo "错误：TRIM_PKGVAR 环境变量未设置" > "$TRIM_TEMP_LOGFILE"
+    exit 1
+fi
+
+# 先停止应用
+echo "停止应用以应用新配置..."
+"$SCRIPT_DIR/main" stop || true
+
+# 创建配置目录
+mkdir -p "$DATA_DIR"
+
+# 设置目录权限
+chown -R package:package "$DATA_DIR" 2>/dev/null || true
+
+# 获取用户配置（从向导或环境变量）
+RPC_USERNAME="${wizard_rpc_username:-${RPC_USERNAME:-admin}}"
+RPC_PASSWORD="${wizard_rpc_password:-${RPC_PASSWORD:-password}}"
+
+# 端口配置：优先使用向导变量，其次使用系统变量，最后使用默认值
+WEBUI_PORT="${wizard_app_port:-${TRIM_SERVICE_PORT:-9090}}"
+echo "端口: ${WEBUI_PORT}"
+
+# 读取现有配置或创建新配置
+if [ -f "$CONFIG_DIR" ]; then
+    echo "更新现有配置..."
+else
+    echo "创建新配置..."
+    mkdir -p "$(dirname "$CONFIG_DIR")"
+fi
+
+cat > "$CONFIG_DIR" << EOF
+{
+    "download-dir": "/vol1/1000/downloads",
+    "incomplete-dir": "/vol1/1000/temp",
+    "incomplete-dir-enabled": true,
+    "dht-enabled": true,
+    "pex-enabled": true,
+    "lpd-enabled": true,
+    "encryption": 1,
+    "peer-limit-global": 200,
+    "peer-port": 51413,
+    "peer-port-random-on-start": true,
+    "rpc-enabled": true,
+    "rpc-authentication-required": true,
+    "rpc-port": ${WEBUI_PORT},
+    "rpc-url": "/transmission/",
+    "rpc-host-whitelist-enabled": false,
+    "rpc-whitelist-enabled": false,
+    "rpc-username": "${RPC_USERNAME}",
+    "rpc-password": "${RPC_PASSWORD}",
+    "start-added-torrents": true,
+    "utp-enabled": true
+}
+EOF
+
+echo ""
+echo "==================================="
+echo "Transmission 配置已应用"
+echo "==================================="
+echo ""
+echo "用户名: ${RPC_USERNAME}"
+echo "端口: ${WEBUI_PORT}"
+echo ""
+echo "WebUI: http://<NAS_IP>:${WEBUI_PORT}/transmission/"
+echo ""
+
+# 启动服务以应用新配置
+echo "启动服务以应用新配置..."
+if ! "$SCRIPT_DIR/main" start; then
+    echo "错误：服务启动失败" > "$TRIM_TEMP_LOGFILE"
+    exit 1
+fi
+
+echo "Transmission 配置应用完成"
+exit 0

@@ -1,0 +1,23 @@
+# fnOS app package - do not commit build outputs
+artifacts/
+builds/
+*.fpk
+*.sha256sum
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+temp/
+
+# Local build cache
+.local-build/

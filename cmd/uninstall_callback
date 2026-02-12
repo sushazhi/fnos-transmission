@@ -1,0 +1,14 @@
+#!/bin/bash
+# cmd/uninstall_callback - Transmission卸载回调脚本
+
+set -e
+
+APP_NAME="transmission-daemon"
+
+echo "正在清理 ${APP_NAME}..."
+
+# 清理临时文件
+rm -f "${TRIM_PKGTMP}/${APP_NAME}.pid"
+
+echo "${APP_NAME} 清理完成"
+exit 0

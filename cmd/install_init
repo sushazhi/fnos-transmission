@@ -1,0 +1,7 @@
+#!/bin/bash
+# cmd/install_init - Transmission安装初始化脚本
+# 注意：目录和配置创建由 install_callback 处理
+
+echo "Transmission install_init started"
+echo "install_init 完成，等待 install_callback 处理"
+exit 0

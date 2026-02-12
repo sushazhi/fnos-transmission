@@ -1,0 +1,3 @@
+# 排除 artifacts 和 builds 目录，不包含在 GitHub 自动生成的源码压缩包中
+artifacts/ export-ignore
+builds/ export-ignore

@@ -1,0 +1,87 @@
+#!/bin/bash
+# cmd/install_callback - Transmission安装后置脚本
+
+set -e
+
+APP_NAME="transmission-daemon"
+BIN_DIR="${TRIM_APPDEST}/bin"
+LIB_DIR="${TRIM_APPDEST}/lib"
+DATA_DIR="${TRIM_PKGVAR}"
+CONFIG_DIR="${DATA_DIR}/settings.json"
+
+echo "正在执行 ${APP_NAME} 安装后置脚本..."
+
+# 设置可执行权限
+if ! chmod +x "$BIN_DIR/transmission-daemon" 2>/dev/null; then
+    echo "错误：无法设置可执行权限" > "$TRIM_TEMP_LOGFILE"
+    exit 1
+fi
+
+# 设置库文件权限（755 对.so库是推荐的，包含执行权限）
+if [ -d "$LIB_DIR" ]; then
+    chmod 755 "$LIB_DIR" 2>/dev/null || true
+    chmod 755 "$LIB_DIR"/*.so* 2>/dev/null || true
+fi
+
+# 获取用户配置（从向导或环境变量）
+# 向导变量名: wizard_rpc_username, wizard_rpc_password
+RPC_USERNAME="${wizard_rpc_username:-${RPC_USERNAME:-admin}}"
+RPC_PASSWORD="${wizard_rpc_password:-${RPC_PASSWORD:-password}}"
+
+echo "正在应用配置..."
+echo "用户名: ${RPC_USERNAME}"
+
+# 端口配置：优先使用向导变量，其次使用系统变量，最后使用默认值
+WEBUI_PORT="${wizard_app_port:-${TRIM_SERVICE_PORT:-9090}}"
+echo "端口: ${WEBUI_PORT}"
+
+# 创建配置目录
+mkdir -p "$DATA_DIR"
+mkdir -p "$DATA_DIR/torrents"
+
+# 设置目录权限（让 package 用户可写）
+chown -R package:package "$DATA_DIR" 2>/dev/null || true
+chmod 755 "$DATA_DIR" 2>/dev/null || true
+chmod 755 "$DATA_DIR/torrents" 2>/dev/null || true
+
+# 生成配置文件（使用 cat 配合 EOF 注入变量值）
+cat > "$CONFIG_DIR" << EOF
+{
+    "download-dir": "/vol1/1000/downloads",
+    "incomplete-dir": "/vol1/1000/temp",
+    "incomplete-dir-enabled": true,
+    "dht-enabled": true,
+    "pex-enabled": true,
+    "lpd-enabled": true,
+    "encryption": 1,
+    "peer-limit-global": 200,
+    "peer-port": 51413,
+    "peer-port-random-on-start": true,
+    "rpc-enabled": true,
+    "rpc-authentication-required": true,
+    "rpc-port": ${WEBUI_PORT},
+    "rpc-url": "/transmission/",
+    "rpc-host-whitelist-enabled": false,
+    "rpc-whitelist-enabled": false,
+    "rpc-username": "${RPC_USERNAME}",
+    "rpc-password": "${RPC_PASSWORD}",
+    "start-added-torrents": true,
+    "utp-enabled": true
+}
+EOF
+
+echo ""
+echo "=================================="
+echo "Transmission 安装完成"
+echo "=================================="
+echo ""
+echo "WebUI: http://<NAS_IP>:${WEBUI_PORT}/transmission/"
+echo ""
+echo "用户名: ${RPC_USERNAME}"
+echo ""
+echo "数据目录: $DATA_DIR"
+echo "配置文件: $CONFIG_DIR"
+echo ""
+
+echo "Transmission 安装成功"
+exit 0

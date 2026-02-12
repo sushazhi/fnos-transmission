@@ -1,0 +1,336 @@
+name: Build and Release Transmission for fnOS
+
+on:
+  push:
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, develop, test ]
+  workflow_dispatch:
+    inputs:
+      transmission_version:
+        description: 'Transmission version (e.g., 4.1.0)'
+        required: false
+        default: '4.1.0'
+      webui_version:
+        description: 'WebUI version (e.g., 0.0.8 or "latest")'
+        required: false
+        default: 'latest'
+
+permissions:
+  contents: write
+
+env:
+  APP_VERSION: 4.1.0
+  TRANSMISSION_VERSION: "4.1.0"
+  WEBUI_VERSION: "latest"
+  ARCH: arm64
+
+jobs:
+  build:
+    name: Build Transmission - ${{ matrix.arch }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build \
+            pkg-config \
+            libssl-dev \
+            libcurl4-openssl-dev \
+            zlib1g-dev \
+            libminiupnpc-dev \
+            libappindicator3-dev \
+            git \
+            wget \
+            unzip
+
+      - name: Read version from manifest
+        id: version
+        run: |
+          APP_VERSION=$(grep "^version = " manifest | cut -d' ' -f3)
+          echo "APP_VERSION=${APP_VERSION}" >> $GITHUB_OUTPUT
+          echo "APP_VERSION=${APP_VERSION}" >> $GITHUB_ENV
+          echo "Read version from manifest: ${APP_VERSION}"
+
+      - name: Get WebUI version
+        id: versions
+        run: |
+          VERSION="${{ env.TRANSMISSION_VERSION }}"
+
+          if [ "${{ env.WEBUI_VERSION }}" = "latest" ]; then
+            WEBUI_VERSION=$(curl -s https://api.github.com/repos/jianxcao/transmission-web/releases/latest | sed -n 's/.*"tag_name": "v\([^"]*\)".*/\1/p')
+          else
+            WEBUI_VERSION="${{ env.WEBUI_VERSION }}"
+          fi
+
+          echo "TRANSMISSION_VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "WEBUI_VERSION=${WEBUI_VERSION}" >> $GITHUB_OUTPUT
+          echo "WEBUI_VERSION=${WEBUI_VERSION}" >> $GITHUB_ENV
+          echo "Building Transmission ${VERSION} with WebUI ${WEBUI_VERSION}"
+
+      - name: Download source and WebUI (parallel)
+        run: |
+          echo "Downloading Transmission source and WebUI in parallel..."
+          echo ""
+
+          # Download in parallel
+          wget -q "https://github.com/transmission/transmission/releases/download/${{ steps.versions.outputs.TRANSMISSION_VERSION }}/transmission-${{ steps.versions.outputs.TRANSMISSION_VERSION }}.tar.xz" -O /tmp/transmission.tar.xz &
+          wget -q "https://github.com/jianxcao/transmission-web/releases/download/v${{ steps.versions.outputs.WEBUI_VERSION }}/transmission-web-v${{ steps.versions.outputs.WEBUI_VERSION }}.zip" -O /tmp/webui.zip &
+          wait
+
+          if [ ! -s /tmp/transmission.tar.xz ]; then
+            echo "ERROR: Failed to download Transmission source"
+            exit 1
+          fi
+
+          if [ ! -s /tmp/webui.zip ]; then
+            echo "ERROR: Failed to download transmission-web UI"
+            exit 1
+          fi
+
+          echo "Downloaded Transmission: $(ls -lh /tmp/transmission.tar.xz | awk '{print $5}')"
+          echo "Downloaded WebUI: $(ls -lh /tmp/webui.zip | awk '{print $5}')"
+
+      - name: Extract source and WebUI
+        run: |
+          mkdir -p /tmp/transmission-build
+          cd /tmp/transmission-build
+          tar -xf /tmp/transmission.tar.xz --strip-components=1
+
+          mkdir -p /tmp/webui
+          cd /tmp/webui
+          unzip -q /tmp/webui.zip
+
+          echo "Source structure:"
+          ls -la /tmp/transmission-build | head -10
+          echo "WebUI structure:"
+          ls -la /tmp/webui | head -10
+
+      - name: Build Transmission for ARM64
+        run: |
+          cd /tmp/transmission-build
+          rm -rf build
+          mkdir -p build
+          cd build
+
+          # Configure for native ARM64 build - use GCC to avoid clang-tidy crash
+          export CC=gcc CXX=g++
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=gcc \
+            -DCMAKE_CXX_COMPILER=g++ \
+            -DRUN_CLANG_TIDY=OFF \
+            -DBUILD_SHARED_LIBS=ON \
+            -DENABLE_CLI=OFF \
+            -DENABLE_DAEMON=ON \
+            -DENABLE_WEB=OFF \
+            -DENABLE_GTK=OFF \
+            -DENABLE_QT=OFF \
+            -DENABLE_MAC=OFF \
+            -DENABLE_WIN=OFF \
+            -DENABLE_TESTS=OFF \
+            -DUSE_SYSTEMD=OFF \
+            -DENABLE_LIBUPNP=ON
+
+          echo ""
+          echo "CMake configured successfully"
+          ls -la
+
+      - name: Compile binaries
+        run: |
+          cd /tmp/transmission-build/build
+
+          # Check available targets first
+          echo "Available targets:"
+          make help | grep -E "^  transmission" || true
+
+          # Build only transmission-daemon
+          make -j$(nproc) transmission-daemon
+
+          echo ""
+          echo "Build completed:"
+          ls -la daemon/ cli/ utils/ 2>/dev/null || find . -name "transmission-*" -type f -executable
+
+      - name: Prepare app structure
+        run: |
+          mkdir -p app/bin app/lib
+
+          # Copy built binaries
+          if [ -f "/tmp/transmission-build/build/daemon/transmission-daemon" ]; then
+            cp /tmp/transmission-build/build/daemon/transmission-daemon app/bin/
+          elif [ -f "/tmp/transmission-build/build/transmission-daemon" ]; then
+            cp /tmp/transmission-build/build/transmission-daemon app/bin/
+          else
+            echo "ERROR: transmission-daemon not found"
+            find /tmp/transmission-build -name "transmission-daemon" -type f
+            exit 1
+          fi
+
+          chmod +x app/bin/*
+
+          # Copy libminiupnpc shared library for self-contained deployment
+          libminiupnpc=$(find /usr/lib -name "libminiupnpc.so.*" -type f 2>/dev/null | head -1)
+          if [ -n "$libminiupnpc" ] && [ -f "$libminiupnpc" ]; then
+            cp "$libminiupnpc" app/lib/
+            echo "Copied libminiupnpc: $(ls app/lib/)"
+          else
+            echo "WARNING: libminiupnpc not found, binary may not run"
+          fi
+
+          # Ensure WebUI is available
+          if [ -d "/tmp/webui" ] && [ "$(ls -A /tmp/webui 2>/dev/null)" ]; then
+            echo "WebUI already extracted, copying..."
+            cp -r /tmp/webui/* app/ui/
+          else
+            echo "WebUI not found, downloading..."
+            if [ -z "$WEBUI_VERSION" ]; then
+              echo "Resolving latest WebUI version from API..."
+              WEBUI_VERSION=$(curl -s https://api.github.com/repos/jianxcao/transmission-web/releases/latest | sed -n 's/.*"tag_name": "v\([^"]*\)".*/\1/p')
+            fi
+
+            echo "Downloading WebUI v${WEBUI_VERSION}..."
+            wget -v "https://github.com/jianxcao/transmission-web/releases/download/v${WEBUI_VERSION}/transmission-web-v${WEBUI_VERSION}.zip" -O /tmp/webui.zip
+            if [ $? -ne 0 ] || [ ! -s /tmp/webui.zip ]; then
+              echo "ERROR: Failed to download WebUI v${WEBUI_VERSION}"
+              exit 1
+            fi
+
+            if [ -s /tmp/webui.zip ]; then
+              unzip -q /tmp/webui.zip -d /tmp/webui
+              cp -r /tmp/webui/* app/ui/
+              echo "WebUI v${WEBUI_VERSION} installed successfully"
+            else
+              echo "ERROR: Downloaded WebUI file is empty"
+              exit 1
+            fi
+          fi
+
+          # Remove transmission subfolder if it exists
+          rm -rf app/ui/transmission 2>/dev/null || true
+
+          echo "App structure prepared:"
+          echo "Binaries:"
+          ls -lh app/bin/
+          echo "Libraries:"
+          ls -la app/lib/ 2>/dev/null || echo "(no libs)"
+
+      - name: Verify binary
+        run: |
+          BINARY="app/bin/transmission-daemon"
+          if [ ! -f "$BINARY" ]; then
+            echo "ERROR: transmission-daemon not found"
+            exit 1
+          fi
+
+          echo "Binary verification:"
+          file "$BINARY"
+          ls -lh "$BINARY"
+
+          # Verify WebUI
+          if [ ! -f "app/ui/index.html" ]; then
+            echo "ERROR: WebUI index.html not found at app/ui/index.html"
+            exit 1
+          fi
+
+          echo "WebUI verification:"
+          ls -la app/ui/ | head -5
+
+      - name: Inject update check
+        run: |
+          echo "Injecting update check..."
+
+          # Read version from manifest
+          APP_VERSION=$(grep "^version = " manifest | cut -d' ' -f3)
+          echo "App version: ${APP_VERSION}"
+
+          # Inject version into index.html before </body>
+          if [ -f "app/ui/index.html" ]; then
+            # Use perl for reliable multiline replacement
+            perl -i -pe 'BEGIN{undef $/;} s|</body>|
+            <script>
+                window.TRANSMISSION_APP_VERSION = '\'''${APP_VERSION}''\'';
+            </script>
+            <script src="update-check.js"></script>
+            </body>|sg' app/ui/index.html
+            echo "✅ Injected update check (v${APP_VERSION})"
+          else
+            echo "⚠️ WebUI index.html not found"
+          fi
+
+      - name: Download fnpack
+        run: |
+          wget -q https://static2.fnnas.com/fnpack/fnpack-1.2.1-linux-arm64 -O fnpack
+          chmod +x fnpack
+
+      - name: Build .fpk package
+        run: |
+          ./fnpack build .
+          PACKAGE_NAME="transmission-${APP_VERSION}-arm64.fpk"
+          mv transmission.fpk "${PACKAGE_NAME}"
+          echo "PACKAGE_NAME=${PACKAGE_NAME}" >> $GITHUB_ENV
+
+      - name: Create SHA256 checksums
+        run: |
+          sha256sum "${PACKAGE_NAME}" > "${PACKAGE_NAME}.sha256sum"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: transmission-${{ matrix.arch }}-fpk
+          path: |
+            ${{ env.PACKAGE_NAME }}
+            ${{ env.PACKAGE_NAME }}.sha256sum
+          retention-days: 30
+
+      - name: Build summary
+        run: |
+          cat << EOF >> $GITHUB_STEP_SUMMARY
+          ## Build Summary - Transmission for fnOS
+
+          **Version:** ${{ env.APP_VERSION }}
+          **Transmission Version:** ${{ steps.versions.outputs.TRANSMISSION_VERSION }}
+          **WebUI Version:** ${{ steps.versions.outputs.WEBUI_VERSION }}
+          **Architecture:** arm64
+
+          **Build Type:** Native compilation from source
+
+          **Git Info:**
+          - Commit: \`${{ github.sha }}\`
+          - Branch: \`${{ github.ref_name }}\`
+          - Triggered by: ${{ github.event_name }}
+
+          **Components:**
+          - Transmission daemon: ARM64 binary
+          - WebUI: transmission-web v${{ steps.versions.outputs.WEBUI_VERSION }}
+
+          **Build Artifacts:**
+          - Package: \`${PACKAGE_NAME}\`
+          - Checksum: \`${PACKAGE_NAME}.sha256sum\`
+          EOF
+
+      - name: Publish Release with Changelog
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          # Read changelog from manifest
+          CHANGELOG=$(grep "^changelog" manifest | sed 's/changelog\s*=\s*//' | sed 's/<br>/\n/g')
+
+          echo "Publishing release..."
+          gh release create "${{ github.ref_name }}" \
+            "transmission-${APP_VERSION}-arm64.fpk" \
+            "transmission-${APP_VERSION}-arm64.fpk.sha256sum" \
+            --title "Transmission for fnOS v${{ github.ref_name }}" \
+            --notes "$CHANGELOG"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

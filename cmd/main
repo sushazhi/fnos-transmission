@@ -1,0 +1,224 @@
+#!/bin/bash
+# cmd/main - Transmission应用生命周期管理脚本
+
+set -e
+
+APP_NAME="transmission-daemon"
+BIN_DIR="${TRIM_APPDEST}/bin"
+LIB_DIR="${TRIM_APPDEST}/lib"
+DATA_DIR="${TRIM_PKGVAR}"
+CONFIG_DIR="${DATA_DIR}/settings.json"
+PID_FILE="${TRIM_PKGTMP}/${APP_NAME}.pid"
+LOG_FILE="${TRIM_PKGVAR}/${APP_NAME}.log"
+UI_DIR="${TRIM_APPDEST}/ui"
+
+# 设置库路径和 WebUI 路径
+export LD_LIBRARY_PATH="${LIB_DIR}:${LD_LIBRARY_PATH}"
+export TRANSMISSION_WEB_HOME="${UI_DIR}"
+
+# 端口配置：优先使用向导变量，其次使用系统变量，最后使用默认值
+WEBUI_PORT="${wizard_app_port:-${TRIM_SERVICE_PORT:-9090}}"
+
+# 检查环境变量
+if [ -z "$TRIM_APPDEST" ]; then
+    SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)"
+    if [[ "$SCRIPT_PATH" =~ /var/apps/([^/]+)/cmd ]]; then
+        export TRIM_APPDEST="/var/apps/${BASH_REMATCH[1]}"
+        export TRIM_PKGTMP="/var/tmp/${BASH_REMATCH[1]}"
+        export TRIM_PKGVAR="/var/lib/${BASH_REMATCH[1]}"
+    fi
+fi
+
+# 写入错误日志并退出
+error_exit() {
+    local message="$1"
+    local exit_code="${2:-1}"
+    echo "$message" > "$TRIM_TEMP_LOGFILE"
+    exit $exit_code
+}
+
+start() {
+    # 检查是否已运行
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE")
+        if ps -p "$PID" > /dev/null 2>&1; then
+            echo "${APP_NAME} 正在运行 (PID: $PID)"
+            return 0
+        fi
+        rm -f "$PID_FILE"
+    fi
+
+    # 创建必要目录
+    mkdir -p "$(dirname "$PID_FILE")"
+    mkdir -p "$DATA_DIR"  # 确保数据目录存在
+    mkdir -p "${DATA_DIR}/torrents"
+    mkdir -p "${DATA_DIR}/resume"
+
+    # 检查可执行文件
+    if [ ! -x "$BIN_DIR/transmission-daemon" ]; then
+        error_exit "错误：transmission-daemon未找到或不可执行"
+    fi
+
+    # 只在配置文件不存在时创建
+    if [ ! -f "$CONFIG_DIR" ]; then
+        echo "创建默认配置..."
+        if ! mkdir -p "$(dirname "$CONFIG_DIR")"; then
+            error_exit "错误：无法创建配置目录 $(dirname "$CONFIG_DIR")"
+        fi
+
+        # 从环境变量读取或使用默认值
+        RPC_USERNAME="${RPC_USERNAME:-admin}"
+        RPC_PASSWORD="${RPC_PASSWORD:-password}"
+
+        if ! cat > "$CONFIG_DIR" << EOF
+{
+    "download-dir": "/vol1/1000/downloads",
+    "incomplete-dir": "/vol1/1000/temp",
+    "incomplete-dir-enabled": true,
+    "dht-enabled": true,
+    "pex-enabled": true,
+    "lpd-enabled": true,
+    "encryption": 1,
+    "peer-limit-global": 200,
+    "peer-port": 51413,
+    "peer-port-random-on-start": true,
+    "rpc-enabled": true,
+    "rpc-authentication-required": true,
+    "rpc-port": ${WEBUI_PORT},
+    "rpc-url": "/transmission/",
+    "rpc-host-whitelist-enabled": false,
+    "rpc-whitelist-enabled": false,
+    "rpc-username": "${RPC_USERNAME}",
+    "rpc-password": "${RPC_PASSWORD}",
+    "start-added-torrents": true,
+    "utp-enabled": true
+}
+EOF
+        then
+            error_exit "错误：无法写入配置文件 $CONFIG_DIR"
+        fi
+
+        echo "默认配置已创建于 $CONFIG_DIR"
+    fi
+
+    # 启动transmission-daemon
+    echo "启动 ${APP_NAME}..."
+    
+    # 设置环境变量后执行
+    export LD_LIBRARY_PATH="${LIB_DIR}:${LD_LIBRARY_PATH}"
+    export TRANSMISSION_WEB_HOME="${UI_DIR}"
+    
+    # 确保目录存在
+    mkdir -p "$(dirname "$LOG_FILE")"
+    mkdir -p "$(dirname "$PID_FILE")"
+    
+    # 直接运行（以 package 用户身份）
+    "${BIN_DIR}/transmission-daemon" \
+        --config-dir "${DATA_DIR}" \
+        --pid-file "${PID_FILE}" \
+        --logfile "${LOG_FILE}" \
+        --foreground \
+        >> "${LOG_FILE}" 2>&1 &
+
+    # 等待PID文件创建
+    sleep 2
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE")
+        if ps -p "$PID" > /dev/null 2>&1; then
+            echo "${APP_NAME} 启动成功 (PID: $PID)"
+            echo "WebUI: http://<NAS_IP>:${WEBUI_PORT}/transmission/"
+            return 0
+        fi
+    fi
+    error_exit "错误：${APP_NAME} 启动失败"
+}
+
+stop() {
+    # 查找进程
+    PID=""
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE" 2>/dev/null)
+    fi
+
+    if [ -z "$PID" ] || ! ps -p "$PID" > /dev/null 2>&1; then
+        PID=$(pgrep -f "transmission-daemon.*--config-dir" 2>/dev/null | head -1)
+    fi
+
+    if [ -z "$PID" ]; then
+        echo "${APP_NAME} 未运行"
+        return 0
+    fi
+
+    echo "停止 ${APP_NAME} (PID: $PID)..."
+    kill "$PID" 2>/dev/null || true
+
+    # 等待进程结束
+    TIMEOUT=30
+    while ps -p "$PID" > /dev/null 2>&1 && [ $TIMEOUT -gt 0 ]; do
+        sleep 1
+        TIMEOUT=$((TIMEOUT - 1))
+    done
+
+    if ps -p "$PID" > /dev/null 2>&1; then
+        echo "强制终止进程..."
+        kill -9 "$PID" 2>/dev/null || true
+    fi
+
+    rm -f "$PID_FILE" 2>/dev/null
+    rm -f "/var/tmp/${APP_NAME}.pid" 2>/dev/null
+
+    echo "${APP_NAME} 已停止"
+    return 0
+}
+
+restart() {
+    stop
+    sleep 2
+    start
+}
+
+status() {
+    RUNNING=false
+    PID=""
+
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE")
+        if ps -p "$PID" > /dev/null 2>&1; then
+            RUNNING=true
+        fi
+    fi
+
+    if [ "$RUNNING" = false ]; then
+        PID=$(pgrep -f "transmission-daemon.*--config-dir" 2>/dev/null | head -1)
+        if [ -n "$PID" ]; then
+            RUNNING=true
+        fi
+    fi
+
+    if [ "$RUNNING" = true ]; then
+        echo "${APP_NAME} 正在运行 (PID: $PID)"
+        return 0
+    fi
+
+    echo "${APP_NAME} 未运行"
+    return 3
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart)
+        restart
+        ;;
+    status)
+        status
+        ;;
+    *)
+        echo "用法: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac

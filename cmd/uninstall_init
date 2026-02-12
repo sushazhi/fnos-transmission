@@ -1,0 +1,25 @@
+#!/bin/bash
+# cmd/uninstall_init - Transmission卸载初始化脚本
+
+set -e
+
+APP_NAME="transmission-daemon"
+echo "正在卸载 ${APP_NAME}..."
+
+# 获取用户选择的数据处理方式
+DATA_ACTION="${wizard_data_action:-keep}"
+echo "用户数据处理方式: $DATA_ACTION"
+
+# 根据用户选择处理数据目录（var 目录系统会保留，需要手动清理）
+DATA_DIR="${TRIM_PKGVAR}"
+if [ -d "$DATA_DIR" ]; then
+    if [ "$DATA_ACTION" = "delete" ]; then
+        echo "删除数据目录: $DATA_DIR"
+        rm -rf "$DATA_DIR" 2>/dev/null || echo "警告：无法删除数据目录"
+    else
+        echo "保留数据目录: $DATA_DIR"
+    fi
+fi
+
+echo "${APP_NAME} 卸载初始化完成"
+exit 0
