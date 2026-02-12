@@ -202,6 +202,11 @@ jobs:
             if [ -d "$BUILDS_DIR/lib" ]; then
               cp -r "$BUILDS_DIR/lib/"* app/lib/ 2>/dev/null || true
             fi
+
+            # Copy libminiupnpc if it exists in the builds directory
+            if [ -f "$BUILDS_DIR/libminiupnpc.so.17" ]; then
+              cp "$BUILDS_DIR/libminiupnpc.so.17" app/lib/
+            fi
           else
             echo "Using compiled binaries from source (static linking enabled)"
 
@@ -218,6 +223,15 @@ jobs:
 
             chmod +x app/bin/*
             echo "Binary compiled with static libstdc++ - no external libstdc++.so.6 dependency"
+
+            # Copy libminiupnpc shared library for UPnP functionality
+            libminiupnpc=$(find /usr/lib -name "libminiupnpc.so.*" -type f 2>/dev/null | head -1)
+            if [ -n "$libminiupnpc" ] && [ -f "$libminiupnpc" ]; then
+              cp "$libminiupnpc" app/lib/
+              echo "Copied libminiupnpc: $(ls app/lib/)"
+            else
+              echo "WARNING: libminiupnpc not found, UPnP may not work"
+            fi
           fi
 
           # Ensure WebUI is available
