@@ -337,6 +337,38 @@ jobs:
             ${{ env.PACKAGE_NAME }}.sha256sum
           retention-days: 30
 
+      - name: Save prebuilt binaries to builds directory
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          VERSION="${{ env.TRANSMISSION_VERSION }}"
+          BUILDS_DIR="builds/${VERSION}"
+
+          mkdir -p "$BUILDS_DIR"
+
+          # Copy binary
+          cp app/bin/transmission-daemon "$BUILDS_DIR/"
+
+          # Copy libminiupnpc if exists
+          if [ -f "app/lib/libminiupnpc.so.17" ]; then
+            cp app/lib/libminiupnpc.so.17 "$BUILDS_DIR/"
+          fi
+
+          # Write VERSION file
+          echo "$VERSION" > "$BUILDS_DIR/VERSION"
+
+          echo "Prebuilt binaries saved to $BUILDS_DIR"
+          ls -la "$BUILDS_DIR"
+
+      - name: Commit prebuilt binaries
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          VERSION="${{ env.TRANSMISSION_VERSION }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "builds/${VERSION}"
+          git commit -m "chore: 添加 ${VERSION} 预编译产物" || echo "No changes to commit"
+          git push origin main || echo "Push skipped - no changes or permission denied"
+
       - name: Build summary
         run: |
           BUILD_TYPE="${{ steps.check_builds.outputs.use_prebuilt == 'true' && 'Prebuilt binaries (builds/)' || 'Native compilation from source' }}"
