@@ -142,14 +142,13 @@ jobs:
           cd build
 
           # Configure for native ARM64 build - use GCC to avoid clang-tidy crash
-          # Static link libstdc++ to avoid GLIBCXX version compatibility issues on fnOS
-          export CC=gcc CXX=g++ CXXFLAGS="-static-libstdc++"
+          export CC=gcc CXX=g++
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=gcc \
             -DCMAKE_CXX_COMPILER=g++ \
             -DRUN_CLANG_TIDY=OFF \
-            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_SHARED_LIBS=ON \
             -DENABLE_CLI=OFF \
             -DENABLE_DAEMON=ON \
             -DENABLE_WEB=OFF \
@@ -208,7 +207,7 @@ jobs:
               cp "$BUILDS_DIR/libminiupnpc.so.17" app/lib/
             fi
           else
-            echo "Using compiled binaries from source (static linking enabled)"
+            echo "Using compiled binaries from source"
 
             # Copy built binaries
             if [ -f "/tmp/transmission-build/build/daemon/transmission-daemon" ]; then
@@ -222,7 +221,6 @@ jobs:
             fi
 
             chmod +x app/bin/*
-            echo "Binary compiled with static libstdc++ - no external libstdc++.so.6 dependency"
 
             # Copy libminiupnpc shared library for UPnP functionality
             libminiupnpc=$(find /usr/lib -name "libminiupnpc.so.*" -type f 2>/dev/null | head -1)
