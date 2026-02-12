@@ -23,7 +23,7 @@ $APP_VERSION = $Version
 $ARCH = "arm64"
 $BUILD_DIR = Join-Path $PROJECT_DIR ".local-build"
 $FNPACK_URL = "https://static2.fnnas.com/fnpack/fnpack-1.2.1-windows-amd64"
-$GITHUB_BRANCH = "https://ghfast.top/https://raw.githubusercontent.com/sushazhi/fnos-transmission/test"
+$GITHUB_BRANCH = "https://ghfast.top/https://raw.githubusercontent.com/sushazhi/fnos-transmission/main"
 $WEBUI_BASE = "https://ghfast.top/https://github.com/jianxcao/transmission-web/releases/download"
 
 Write-Host "========================================" -ForegroundColor Cyan

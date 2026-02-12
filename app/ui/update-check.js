@@ -11,6 +11,12 @@
 (function() {
   'use strict';
 
+  // 调试模式（必须在使用前定义）
+  const isDebug = new URLSearchParams(window.location.search).get('debug') === '1';
+  function log(msg) {
+    if (isDebug) console.log('[Update]', msg);
+  }
+
   const CONFIG = {
     currentVersion: window.TRANSMISSION_APP_VERSION || '4.1.0',
     repoOwner: 'sushazhi',
@@ -18,20 +24,15 @@
     checkInterval: 24 * 60 * 60 * 1000
   };
 
+  // 常量定义
+  const CACHE_KEY = 'transmission-update-cache';
+  const IGNORE_KEY = 'transmission-update-ignore';
+  const CLOSE_TIME_KEY = 'transmission-update-close-time';
+  const CLOSE_DURATION = 24 * 60 * 60 * 1000;
+
   // 记录当前版本用于调试
   if (isDebug) {
     console.log('[Update] 当前应用版本:', CONFIG.currentVersion);
-  }
-
-  const CACHE_KEY = 'transmission_update_check';
-  const IGNORE_KEY = 'transmission_ignore_version';
-  const CLOSE_TIME_KEY = 'transmission_close_time';
-  const CLOSE_DURATION = 24 * 60 * 60 * 1000; // 24小时
-
-  // 调试模式
-  const isDebug = new URLSearchParams(window.location.search).get('debug') === '1';
-  function log(msg) {
-    if (isDebug) console.log('[Update]', msg);
   }
 
   function getCachedResult() {
@@ -89,6 +90,18 @@
     return Date.now() - getCloseTime() < CLOSE_DURATION;
   }
 
+  // 简单的 Markdown 转 HTML（用于更新日志）
+  function formatChangelog(markdown) {
+    if (!markdown) return '';
+    // 限制显示前500字符
+    let text = markdown.substring(0, 500);
+    // 移除空行，用 <br> 分隔
+    text = text.split('\n').map(line => line.trim()).filter(line => line.length > 0).join('<br>');
+    // 转换 Markdown 列表项
+    text = text.replace(/- (.*$)/gim, '• $1');
+    return text;
+  }
+
   function compareVersions(current, latest) {
     const cur = (current || '').split('.').map(n => parseInt(n, 10) || 0);
     const lat = (latest || '').split('.').map(n => parseInt(n, 10) || 0);
@@ -125,20 +138,27 @@
     // 创建通知元素
     const notification = document.createElement('div');
     notification.id = 'transmission-update-notification';
+
+    // 格式化更新日志
+    const changelogHtml = formatChangelog(updateInfo.changelog);
+    const hasChangelog = changelogHtml && changelogHtml.length > 0;
+
     notification.innerHTML = `
       <div class="update-notification-content">
-        <div class="update-notification-icon">🚀</div>
         <div class="update-notification-text">
-          <div class="update-notification-title">发现新版本</div>
+          <div class="update-notification-header">
+            <div class="update-notification-title">发现新版本</div>
+            <div class="update-notification-actions">
+              <a href="${updateInfo.releaseUrl}" target="_blank" class="update-notification-btn update-notification-btn-primary">前往下载</a>
+              <button class="update-notification-btn update-notification-btn-secondary ignore-btn">忽略此版本</button>
+            </div>
+          </div>
           <div class="update-notification-version">
             当前: v${CONFIG.currentVersion} → 最新: v${updateInfo.latestVersion}
           </div>
+          ${hasChangelog ? `<div class="update-notification-changelog">${changelogHtml}${updateInfo.changelog.length > 500 ? '...' : ''}</div>` : ''}
         </div>
-        <div class="update-notification-actions">
-          <a href="${updateInfo.releaseUrl}" target="_blank" class="update-notification-btn update-notification-btn-primary">前往下载</a>
-          <button class="update-notification-btn update-notification-btn-secondary ignore-btn">忽略此版本</button>
-          <button class="update-notification-close">&times;</button>
-        </div>
+        <button class="update-notification-close">&times;</button>
       </div>
     `;
 
@@ -161,28 +181,90 @@
         }
         .update-notification-content {
           display: flex;
-          align-items: center;
+          align-items: flex-start;
           gap: 12px;
           background: white;
-          padding: 16px 20px;
+          padding: 20px 24px;
           border-radius: 12px;
           box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-        }
-        .update-notification-icon {
-          font-size: 32px;
+          position: relative;
         }
         .update-notification-text {
           flex: 1;
         }
+        .update-notification-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          flex-wrap: wrap;
+        }
         .update-notification-title {
           font-weight: 600;
-          font-size: 15px;
+          font-size: 22px;
           color: #333;
         }
         .update-notification-version {
-          font-size: 13px;
+          font-size: 14px;
           color: #667eea;
-          margin-top: 4px;
+          margin-top: 6px;
+        }
+        .update-notification-changelog {
+          font-size: 18px;
+          color: #666;
+          margin-top: 12px;
+          line-height: 1.6;
+          max-height: 120px;
+          overflow-y: auto;
+        }
+        .update-notification-actions {
+          display: flex;
+          gap: 12px;
+          align-items: center;
+        }
+        .update-notification-btn {
+          padding: 12px 24px;
+          border-radius: 6px;
+          font-size: 16px;
+          font-weight: 500;
+          text-decoration: none;
+          cursor: pointer;
+          border: none;
+        }
+        .update-notification-title {
+          font-weight: 600;
+          font-size: 18px;
+          color: #333;
+        }
+        .update-notification-changelog {
+          font-size: 14px;
+          color: #666;
+          margin-top: 10px;
+          line-height: 1.6;
+          max-height: 120px;
+          overflow-y: auto;
+        }
+        .update-notification-actions {
+          display: flex;
+          gap: 10px;
+          align-items: center;
+        }
+        .update-notification-btn {
+          padding: 10px 20px;
+          border-radius: 6px;
+          font-size: 14px;
+          font-weight: 500;
+          text-decoration: none;
+          cursor: pointer;
+          border: none;
+        }
+        .update-notification-changelog {
+          font-size: 12px;
+          color: #666;
+          margin-top: 8px;
+          line-height: 1.5;
+          max-height: 100px;
+          overflow-y: auto;
         }
         .update-notification-actions {
           display: flex;
@@ -220,8 +302,82 @@
           cursor: pointer;
           padding: 0 4px;
         }
+        .update-notification-close {
+          background: none;
+          border: none;
+          font-size: 24px;
+          color: #999;
+          cursor: pointer;
+          padding: 4px 8px;
+          line-height: 1;
+        }
         .update-notification-close:hover {
           color: #333;
+        }
+        /* 移动端适配 */
+        @media (max-width: 480px) {
+          #transmission-update-notification {
+            bottom: 10px;
+            right: 10px;
+            left: 10px;
+          }
+          .update-notification-content {
+            padding: 16px 16px 16px 18px;
+          }
+          .update-notification-header {
+            flex-direction: row;
+            align-items: flex-start;
+            padding-right: 24px;
+          }
+          .update-notification-title {
+            font-size: 18px;
+          }
+          .update-notification-version {
+            font-size: 13px;
+          }
+          .update-notification-changelog {
+            font-size: 15px;
+            margin-top: 8px;
+            max-height: 80px;
+          }
+          .update-notification-actions {
+            width: auto;
+            flex-wrap: nowrap;
+          }
+          .update-notification-btn {
+            padding: 8px 12px;
+            font-size: 13px;
+          }
+          .update-notification-close {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            font-size: 22px;
+          }
+        }
+        /* 平板适配 */
+        @media (min-width: 481px) and (max-width: 768px) {
+          #transmission-update-notification {
+            bottom: 15px;
+            right: 15px;
+            max-width: 400px;
+          }
+          .update-notification-content {
+            padding: 18px 20px;
+          }
+          .update-notification-title {
+            font-size: 17px;
+          }
+          .update-notification-version {
+            font-size: 15px;
+          }
+          .update-notification-btn {
+            padding: 9px 18px;
+            font-size: 13px;
+          }
+          .update-notification-changelog {
+            font-size: 13px;
+          }
         }
       `;
       document.head.appendChild(styles);
@@ -279,7 +435,8 @@
       const result = {
         hasUpdate,
         latestVersion,
-        releaseUrl: data.html_url || ''
+        releaseUrl: data.html_url || '',
+        changelog: data.body || ''
       };
 
       // 不缓存结果，每次都重新检测
