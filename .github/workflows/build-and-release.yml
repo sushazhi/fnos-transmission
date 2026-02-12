@@ -20,7 +20,6 @@ permissions:
   contents: write
 
 env:
-  APP_VERSION: 4.1.0
   TRANSMISSION_VERSION: "4.1.0"
   WEBUI_VERSION: "latest"
   ARCH: arm64
@@ -80,7 +79,22 @@ jobs:
           echo "WEBUI_VERSION=${WEBUI_VERSION}" >> $GITHUB_ENV
           echo "Building Transmission ${VERSION} with WebUI ${WEBUI_VERSION}"
 
+      - name: Check if prebuilt binaries exist
+        id: check_builds
+        run: |
+          TRANSMISSION_VERSION="${{ env.TRANSMISSION_VERSION }}"
+          BUILDS_DIR="${{ github.workspace }}/builds/${TRANSMISSION_VERSION}"
+
+          if [ -d "$BUILDS_DIR" ] && [ -f "$BUILDS_DIR/transmission-daemon" ]; then
+            echo "Prebuilt binaries found for version ${TRANSMISSION_VERSION}"
+            echo "use_prebuilt=true" >> $GITHUB_OUTPUT
+          else
+            echo "No prebuilt binaries found for version ${TRANSMISSION_VERSION}"
+            echo "use_prebuilt=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Download source and WebUI (parallel)
+        if: steps.check_builds.outputs.use_prebuilt != 'true'
         run: |
           echo "Downloading Transmission source and WebUI in parallel..."
           echo ""
@@ -104,6 +118,7 @@ jobs:
           echo "Downloaded WebUI: $(ls -lh /tmp/webui.zip | awk '{print $5}')"
 
       - name: Extract source and WebUI
+        if: steps.check_builds.outputs.use_prebuilt != 'true'
         run: |
           mkdir -p /tmp/transmission-build
           cd /tmp/transmission-build
@@ -119,6 +134,7 @@ jobs:
           ls -la /tmp/webui | head -10
 
       - name: Build Transmission for ARM64
+        if: steps.check_builds.outputs.use_prebuilt != 'true'
         run: |
           cd /tmp/transmission-build
           rm -rf build
@@ -126,13 +142,14 @@ jobs:
           cd build
 
           # Configure for native ARM64 build - use GCC to avoid clang-tidy crash
-          export CC=gcc CXX=g++
+          # Static link libstdc++ to avoid GLIBCXX version compatibility issues on fnOS
+          export CC=gcc CXX=g++ CXXFLAGS="-static-libstdc++"
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=gcc \
             -DCMAKE_CXX_COMPILER=g++ \
             -DRUN_CLANG_TIDY=OFF \
-            -DBUILD_SHARED_LIBS=ON \
+            -DBUILD_SHARED_LIBS=OFF \
             -DENABLE_CLI=OFF \
             -DENABLE_DAEMON=ON \
             -DENABLE_WEB=OFF \
@@ -149,6 +166,7 @@ jobs:
           ls -la
 
       - name: Compile binaries
+        if: steps.check_builds.outputs.use_prebuilt != 'true'
         run: |
           cd /tmp/transmission-build/build
 
@@ -167,26 +185,39 @@ jobs:
         run: |
           mkdir -p app/bin app/lib
 
-          # Copy built binaries
-          if [ -f "/tmp/transmission-build/build/daemon/transmission-daemon" ]; then
-            cp /tmp/transmission-build/build/daemon/transmission-daemon app/bin/
-          elif [ -f "/tmp/transmission-build/build/transmission-daemon" ]; then
-            cp /tmp/transmission-build/build/transmission-daemon app/bin/
-          else
-            echo "ERROR: transmission-daemon not found"
-            find /tmp/transmission-build -name "transmission-daemon" -type f
-            exit 1
-          fi
+          # Copy built binaries or use prebuilt
+          if [ "${{ steps.check_builds.outputs.use_prebuilt }}" = "true" ]; then
+            echo "Using prebuilt binaries from builds/${{ env.TRANSMISSION_VERSION }}/"
+            TRANSMISSION_VERSION="${{ env.TRANSMISSION_VERSION }}"
+            BUILDS_DIR="${{ github.workspace }}/builds/${TRANSMISSION_VERSION}"
 
-          chmod +x app/bin/*
+            if [ -f "$BUILDS_DIR/transmission-daemon" ]; then
+              cp "$BUILDS_DIR/transmission-daemon" app/bin/
+            else
+              echo "ERROR: Prebuilt transmission-daemon not found in $BUILDS_DIR"
+              exit 1
+            fi
 
-          # Copy libminiupnpc shared library for self-contained deployment
-          libminiupnpc=$(find /usr/lib -name "libminiupnpc.so.*" -type f 2>/dev/null | head -1)
-          if [ -n "$libminiupnpc" ] && [ -f "$libminiupnpc" ]; then
-            cp "$libminiupnpc" app/lib/
-            echo "Copied libminiupnpc: $(ls app/lib/)"
+            # Check for prebuilt libraries
+            if [ -d "$BUILDS_DIR/lib" ]; then
+              cp -r "$BUILDS_DIR/lib/"* app/lib/ 2>/dev/null || true
+            fi
           else
-            echo "WARNING: libminiupnpc not found, binary may not run"
+            echo "Using compiled binaries from source (static linking enabled)"
+
+            # Copy built binaries
+            if [ -f "/tmp/transmission-build/build/daemon/transmission-daemon" ]; then
+              cp /tmp/transmission-build/build/daemon/transmission-daemon app/bin/
+            elif [ -f "/tmp/transmission-build/build/transmission-daemon" ]; then
+              cp /tmp/transmission-build/build/transmission-daemon app/bin/
+            else
+              echo "ERROR: transmission-daemon not found"
+              find /tmp/transmission-build -name "transmission-daemon" -type f
+              exit 1
+            fi
+
+            chmod +x app/bin/*
+            echo "Binary compiled with static libstdc++ - no external libstdc++.so.6 dependency"
           fi
 
           # Ensure WebUI is available
@@ -296,6 +327,8 @@ jobs:
 
       - name: Build summary
         run: |
+          BUILD_TYPE="${{ steps.check_builds.outputs.use_prebuilt == 'true' && 'Prebuilt binaries (builds/)' || 'Native compilation from source' }}"
+
           cat << EOF >> $GITHUB_STEP_SUMMARY
           ## Build Summary - Transmission for fnOS
 
@@ -304,7 +337,7 @@ jobs:
           **WebUI Version:** ${{ steps.versions.outputs.WEBUI_VERSION }}
           **Architecture:** arm64
 
-          **Build Type:** Native compilation from source
+          **Build Type:** ${BUILD_TYPE}
 
           **Git Info:**
           - Commit: \`${{ github.sha }}\`
