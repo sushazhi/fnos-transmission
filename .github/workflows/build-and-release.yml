@@ -338,7 +338,7 @@ jobs:
           retention-days: 30
 
       - name: Save prebuilt binaries to builds directory
-        if: github.event_name == 'workflow_dispatch'
+        if: steps.check_builds.outputs.use_prebuilt != 'true'
         run: |
           VERSION="${{ env.TRANSMISSION_VERSION }}"
           BUILDS_DIR="builds/${VERSION}"
@@ -360,7 +360,7 @@ jobs:
           ls -la "$BUILDS_DIR"
 
       - name: Commit prebuilt binaries
-        if: github.event_name == 'workflow_dispatch'
+        if: steps.check_builds.outputs.use_prebuilt != 'true'
         run: |
           VERSION="${{ env.TRANSMISSION_VERSION }}"
           git config user.name "github-actions[bot]"
