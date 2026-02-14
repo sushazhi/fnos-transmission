@@ -7,6 +7,7 @@ set -e
 APP_NAME="transmission-daemon"
 DATA_DIR="${TRIM_PKGVAR}"
 CONFIG_DIR="${DATA_DIR}/settings.json"
+PID_FILE="${TRIM_PKGTMP}/${APP_NAME}.pid"
 
 # 获取脚本目录
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -19,9 +20,21 @@ if [ -z "$DATA_DIR" ]; then
     exit 1
 fi
 
-# 先停止应用
-echo "停止应用以应用新配置..."
-"$SCRIPT_DIR/main" stop || true
+# 检查应用是否正在运行
+WAS_RUNNING=false
+if [ -f "$PID_FILE" ]; then
+    PID=$(cat "$PID_FILE" 2>/dev/null)
+    if [ -n "$PID" ] && ps -p "$PID" > /dev/null 2>&1; then
+        WAS_RUNNING=true
+        echo "应用正在运行，需要先停止..."
+        "$SCRIPT_DIR/main" stop
+        sleep 2
+    else
+        echo "应用当前处于停止状态"
+    fi
+else
+    echo "应用当前处于停止状态"
+fi
 
 # 创建配置目录
 mkdir -p "$DATA_DIR"
@@ -81,11 +94,16 @@ echo ""
 echo "WebUI: http://<NAS_IP>:${WEBUI_PORT}/transmission/"
 echo ""
 
-# 启动服务以应用新配置
-echo "启动服务以应用新配置..."
-if ! "$SCRIPT_DIR/main" start; then
-    echo "错误：服务启动失败" > "$TRIM_TEMP_LOGFILE"
-    exit 1
+# 根据之前的状态决定是否启动服务
+if [ "$WAS_RUNNING" = true ]; then
+    echo "应用之前在运行，正在重启..."
+    if ! "$SCRIPT_DIR/main" start; then
+        echo "错误：服务启动失败" > "$TRIM_TEMP_LOGFILE"
+        exit 1
+    fi
+    echo "Transmission 配置已应用，服务已重启"
+else
+    echo "应用之前处于停止状态，配置已应用，不会自动启动"
 fi
 
 echo "Transmission 配置应用完成"
