@@ -1,6 +1,6 @@
 # fnOS app package - do not commit build outputs
 artifacts/
-!builds/
+builds/
 *.fpk
 *.sha256sum
 
