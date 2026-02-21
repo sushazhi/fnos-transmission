@@ -8,11 +8,11 @@ on:
   workflow_dispatch:
     inputs:
       transmission_version:
-        description: 'Transmission version (e.g., 4.1.0)'
+        description: 'Transmission version (e.g., 4.1.1)'
         required: false
-        default: '4.1.0'
+        default: '4.1.1'
       webui_version:
-        description: 'WebUI version (e.g., 0.0.8 or "latest")'
+        description: 'WebUI version (e.g., 0.0.9 or "latest")'
         required: false
         default: 'latest'
 
@@ -20,7 +20,6 @@ permissions:
   contents: write
 
 env:
-  TRANSMISSION_VERSION: "4.1.0"
   WEBUI_VERSION: "latest"
   ARCH: arm64
 
@@ -59,9 +58,25 @@ jobs:
         id: version
         run: |
           APP_VERSION=$(grep "^version = " manifest | cut -d' ' -f3)
+          # Extract transmission version (first 3 parts)
+          # e.g., 4.1.0.1 -> 4.1.0, 4.1.1 -> 4.1.1
+          TRANSMISSION_VERSION=$(echo "$APP_VERSION" | cut -d'.' -f1-3)
+          # Check if version is 3-part (e.g., 4.1.1) for release
+          VERSION_PARTS=$(echo "$APP_VERSION" | tr '.' '\n' | wc -l)
+          if [ "$VERSION_PARTS" -eq 3 ]; then
+            IS_RELEASE_VERSION="true"
+          else
+            IS_RELEASE_VERSION="false"
+          fi
           echo "APP_VERSION=${APP_VERSION}" >> $GITHUB_OUTPUT
           echo "APP_VERSION=${APP_VERSION}" >> $GITHUB_ENV
+          echo "TRANSMISSION_VERSION=${TRANSMISSION_VERSION}" >> $GITHUB_OUTPUT
+          echo "TRANSMISSION_VERSION=${TRANSMISSION_VERSION}" >> $GITHUB_ENV
+          echo "IS_RELEASE_VERSION=${IS_RELEASE_VERSION}" >> $GITHUB_OUTPUT
+          echo "IS_RELEASE_VERSION=${IS_RELEASE_VERSION}" >> $GITHUB_ENV
           echo "Read version from manifest: ${APP_VERSION}"
+          echo "Transmission version: ${TRANSMISSION_VERSION}"
+          echo "Is release version (3-part): ${IS_RELEASE_VERSION}"
 
       - name: Get WebUI version
         id: versions
@@ -79,19 +94,52 @@ jobs:
           echo "WEBUI_VERSION=${WEBUI_VERSION}" >> $GITHUB_ENV
           echo "Building Transmission ${VERSION} with WebUI ${WEBUI_VERSION}"
 
-      - name: Check if prebuilt binaries exist
+      - name: Try download prebuilt binaries from release
         id: check_builds
         run: |
           TRANSMISSION_VERSION="${{ env.TRANSMISSION_VERSION }}"
-          BUILDS_DIR="${{ github.workspace }}/builds/${TRANSMISSION_VERSION}"
+          BUILDS_DIR="/tmp/builds/${TRANSMISSION_VERSION}"
+          mkdir -p "$BUILDS_DIR"
 
-          if [ -d "$BUILDS_DIR" ] && [ -f "$BUILDS_DIR/transmission-daemon" ]; then
+          # Try to download from release (only for 3-part versions)
+          if [ "${{ env.IS_RELEASE_VERSION }}" = "true" ]; then
+            echo "Checking for prebuilt binaries in release v${TRANSMISSION_VERSION}..."
+            
+            # Try to download transmission-daemon
+            if gh release download "v${TRANSMISSION_VERSION}" \
+              --pattern "transmission-daemon-${TRANSMISSION_VERSION}" \
+              --dir "$BUILDS_DIR" \
+              --clobber 2>/dev/null; then
+              mv "$BUILDS_DIR/transmission-daemon-${TRANSMISSION_VERSION}" "$BUILDS_DIR/transmission-daemon"
+              echo "Downloaded transmission-daemon from release"
+            else
+              echo "transmission-daemon not found in release"
+            fi
+            
+            # Try to download libminiupnpc.so.17
+            if gh release download "v${TRANSMISSION_VERSION}" \
+              --pattern "libminiupnpc.so.17-${TRANSMISSION_VERSION}" \
+              --dir "$BUILDS_DIR" \
+              --clobber 2>/dev/null; then
+              mv "$BUILDS_DIR/libminiupnpc.so.17-${TRANSMISSION_VERSION}" "$BUILDS_DIR/libminiupnpc.so.17"
+              echo "Downloaded libminiupnpc.so.17 from release"
+            else
+              echo "libminiupnpc.so.17 not found in release"
+            fi
+          fi
+
+          # Check if we have the required binaries
+          if [ -f "$BUILDS_DIR/transmission-daemon" ]; then
             echo "Prebuilt binaries found for version ${TRANSMISSION_VERSION}"
             echo "use_prebuilt=true" >> $GITHUB_OUTPUT
+            echo "BUILDS_DIR=${BUILDS_DIR}" >> $GITHUB_OUTPUT
+            echo "BUILDS_DIR=${BUILDS_DIR}" >> $GITHUB_ENV
           else
             echo "No prebuilt binaries found for version ${TRANSMISSION_VERSION}"
             echo "use_prebuilt=false" >> $GITHUB_OUTPUT
           fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download source and WebUI (parallel)
         if: steps.check_builds.outputs.use_prebuilt != 'true'
@@ -186,9 +234,8 @@ jobs:
 
           # Copy built binaries or use prebuilt
           if [ "${{ steps.check_builds.outputs.use_prebuilt }}" = "true" ]; then
-            echo "Using prebuilt binaries from builds/${{ env.TRANSMISSION_VERSION }}/"
-            TRANSMISSION_VERSION="${{ env.TRANSMISSION_VERSION }}"
-            BUILDS_DIR="${{ github.workspace }}/builds/${TRANSMISSION_VERSION}"
+            echo "Using prebuilt binaries from release"
+            BUILDS_DIR="${{ env.BUILDS_DIR }}"
 
             if [ -f "$BUILDS_DIR/transmission-daemon" ]; then
               cp "$BUILDS_DIR/transmission-daemon" app/bin/
@@ -197,12 +244,7 @@ jobs:
               exit 1
             fi
 
-            # Check for prebuilt libraries
-            if [ -d "$BUILDS_DIR/lib" ]; then
-              cp -r "$BUILDS_DIR/lib/"* app/lib/ 2>/dev/null || true
-            fi
-
-            # Copy libminiupnpc if it exists in the builds directory
+            # Copy libminiupnpc if it exists
             if [ -f "$BUILDS_DIR/libminiupnpc.so.17" ]; then
               cp "$BUILDS_DIR/libminiupnpc.so.17" app/lib/
             fi
@@ -302,11 +344,11 @@ jobs:
           if [ -f "app/ui/index.html" ]; then
             # Use perl for reliable multiline replacement
             perl -i -pe 'BEGIN{undef $/;} s|</body>|
-            <script>
-                window.TRANSMISSION_APP_VERSION = '\'''${APP_VERSION}''\'';
-            </script>
-            <script src="update-check.js"></script>
-            </body>|sg' app/ui/index.html
+              <script>
+                  window.TRANSMISSION_APP_VERSION = '\'''"${APP_VERSION}"''\'';
+              </script>
+              <script src="update-check.js"></script>
+              </body>|sg' app/ui/index.html
             echo "✅ Injected update check (v${APP_VERSION})"
           else
             echo "⚠️ WebUI index.html not found"
@@ -337,41 +379,9 @@ jobs:
             ${{ env.PACKAGE_NAME }}.sha256sum
           retention-days: 30
 
-      - name: Save prebuilt binaries to builds directory
-        if: steps.check_builds.outputs.use_prebuilt != 'true'
-        run: |
-          VERSION="${{ env.TRANSMISSION_VERSION }}"
-          BUILDS_DIR="builds/${VERSION}"
-
-          mkdir -p "$BUILDS_DIR"
-
-          # Copy binary
-          cp app/bin/transmission-daemon "$BUILDS_DIR/"
-
-          # Copy libminiupnpc if exists
-          if [ -f "app/lib/libminiupnpc.so.17" ]; then
-            cp app/lib/libminiupnpc.so.17 "$BUILDS_DIR/"
-          fi
-
-          # Write VERSION file
-          echo "$VERSION" > "$BUILDS_DIR/VERSION"
-
-          echo "Prebuilt binaries saved to $BUILDS_DIR"
-          ls -la "$BUILDS_DIR"
-
-      - name: Commit prebuilt binaries
-        if: steps.check_builds.outputs.use_prebuilt != 'true'
-        run: |
-          VERSION="${{ env.TRANSMISSION_VERSION }}"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "builds/${VERSION}"
-          git commit -m "chore: 添加 ${VERSION} 预编译产物" || echo "No changes to commit"
-          git push origin main || echo "Push skipped - no changes or permission denied"
-
       - name: Build summary
         run: |
-          BUILD_TYPE="${{ steps.check_builds.outputs.use_prebuilt == 'true' && 'Prebuilt binaries (builds/)' || 'Native compilation from source' }}"
+          BUILD_TYPE="${{ steps.check_builds.outputs.use_prebuilt == 'true' && 'Prebuilt binaries (from release)' || 'Native compilation from source' }}"
 
           cat << EOF >> $GITHUB_STEP_SUMMARY
           ## Build Summary - Transmission for fnOS
@@ -380,6 +390,7 @@ jobs:
           **Transmission Version:** ${{ steps.versions.outputs.TRANSMISSION_VERSION }}
           **WebUI Version:** ${{ steps.versions.outputs.WEBUI_VERSION }}
           **Architecture:** arm64
+          **Is Release Version:** ${{ env.IS_RELEASE_VERSION }}
 
           **Build Type:** ${BUILD_TYPE}
 
@@ -398,15 +409,17 @@ jobs:
           EOF
 
       - name: Publish Release with Changelog
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && env.IS_RELEASE_VERSION == 'true'
         run: |
-          # Read changelog from manifest and format as bullet list
-          CHANGELOG_RAW=$(grep "^changelog" manifest | sed 's/changelog\s*=\s*//' | sed 's/<br>/\n- /g')
-          CHANGELOG="更新日志\n- ${CHANGELOG_RAW}"
+          # Read changelog from manifest
+          CHANGELOG_RAW=$(grep "changelog" manifest | sed 's/.*changelog\s*=\s*//')
+          CHANGELOG="更新日志\n${CHANGELOG_RAW}"
 
           echo "Publishing release..."
           gh release create "${{ github.ref_name }}" \
             "transmission-${APP_VERSION}-arm64.fpk" \
+            "app/bin/transmission-daemon#transmission-daemon-${TRANSMISSION_VERSION}" \
+            "app/lib/libminiupnpc.so.17#libminiupnpc.so.17-${TRANSMISSION_VERSION}" \
             --title "${{ github.ref_name }}" \
             --notes "$CHANGELOG"
         env:

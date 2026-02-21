@@ -2,8 +2,6 @@
 # cmd/config_init - Transmission配置初始化脚本
 # 注意：TRIM_TEMP_LOGFILE在此脚本中不可用，错误日志不会展示给用户
 
-set -e
-
 echo "正在初始化 Transmission 配置..."
 
 # 检查配置目录

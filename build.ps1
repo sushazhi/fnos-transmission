@@ -1,9 +1,19 @@
 # build.ps1 - Transmission for fnOS Local Build
+# Usage:
+#   .\build.ps1                           # Build with default transmission version
+#   .\build.ps1 -TransmissionVersion 4.0.5 # Build with specific transmission version
+#   .\build.ps1 -ListVersions              # List available transmission versions
+
+param(
+    [string]$TransmissionVersion = "",
+    [switch]$ListVersions
+)
 
 $ErrorActionPreference = "Stop"
 
 $PROJECT_DIR = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 $MANIFEST_FILE = Join-Path $PROJECT_DIR "manifest"
+$TRANSMISSION_RELEASES_URL = "https://api.github.com/repos/transmission/transmission/releases"
 
 # Read version from manifest
 $Version = ""
@@ -20,10 +30,39 @@ if (-not $Version) {
 }
 
 $APP_VERSION = $Version
+
+# Extract transmission version (first 3 parts of APP_VERSION)
+# e.g., 4.1.0.1 -> 4.1.0, 4.1.1 -> 4.1.1
+$versionParts = $APP_VERSION -split '\.'
+if ($versionParts.Count -ge 3) {
+    $DEFAULT_TRANSMISSION_VERSION = "$($versionParts[0]).$($versionParts[1]).$($versionParts[2])"
+} else {
+    $DEFAULT_TRANSMISSION_VERSION = $APP_VERSION
+}
+
+# List available transmission versions
+if ($ListVersions) {
+    Write-Host "Fetching available transmission versions..." -ForegroundColor Yellow
+    try {
+        $releases = Invoke-RestMethod -Uri $TRANSMISSION_RELEASES_URL -UseBasicParsing -TimeoutSec 30
+        Write-Host ""
+        Write-Host "Available transmission versions:" -ForegroundColor Cyan
+        $releases | Select-Object -First 10 | ForEach-Object {
+            $ver = $_.tag_name -replace '^v', ''
+            Write-Host "  - $ver" -ForegroundColor Gray
+        }
+        Write-Host ""
+        Write-Host "Usage: .\build.ps1 -TransmissionVersion <version>" -ForegroundColor Yellow
+    } catch {
+        Write-Host "ERROR: Failed to fetch versions from GitHub" -ForegroundColor Red
+        Write-Host $_.Exception.Message
+    }
+    exit 0
+}
 $ARCH = "arm64"
 $BUILD_DIR = Join-Path $PROJECT_DIR ".local-build"
 $FNPACK_URL = "https://static2.fnnas.com/fnpack/fnpack-1.2.1-windows-amd64"
-$GITHUB_BRANCH = "https://ghfast.top/https://raw.githubusercontent.com/sushazhi/fnos-transmission/main"
+$GITHUB_RELEASES_URL = "https://github.com/sushazhi/fnos-transmission/releases/download"
 $WEBUI_BASE = "https://ghfast.top/https://github.com/jianxcao/transmission-web/releases/download"
 
 Write-Host "========================================" -ForegroundColor Cyan
@@ -54,35 +93,47 @@ Write-Host "  Project files copied" -ForegroundColor Green
 
 # Get transmission-daemon
 Write-Host "[3/6] Preparing transmission-daemon..." -ForegroundColor Yellow
-$daemonCache = Join-Path $BUILD_DIR "transmission-daemon"
+
+# Determine transmission version to use
+$targetVersion = if ($TransmissionVersion) { $TransmissionVersion } else { $DEFAULT_TRANSMISSION_VERSION }
+Write-Host "  Transmission version: $targetVersion" -ForegroundColor Gray
+
+$daemonCache = Join-Path $BUILD_DIR "transmission-daemon-$targetVersion"
 $daemonTarget = "$BUILD_DIR\app\bin\transmission-daemon"
+
 if ((Test-Path $daemonCache)) {
     Write-Host "  Using cached binary" -ForegroundColor Green
     Copy-Item $daemonCache $daemonTarget -Force
 } else {
-    Write-Host "  Downloading..." -ForegroundColor Yellow
-    $url = "$GITHUB_BRANCH/builds/$APP_VERSION/transmission-daemon"
-    Invoke-WebRequest -Uri $url -OutFile $daemonCache -UseBasicParsing
-    Copy-Item $daemonCache $daemonTarget -Force
-    Write-Host "  Downloaded" -ForegroundColor Green
+    Write-Host "  Downloading from release v$targetVersion..." -ForegroundColor Yellow
+    $daemonUrl = "$GITHUB_RELEASES_URL/v$targetVersion/transmission-daemon-$targetVersion"
+    try {
+        Invoke-WebRequest -Uri $daemonUrl -OutFile $daemonCache -UseBasicParsing
+        Copy-Item $daemonCache $daemonTarget -Force
+        Write-Host "  Downloaded" -ForegroundColor Green
+    } catch {
+        Write-Host "  ERROR: Failed to download transmission-daemon from release v$targetVersion" -ForegroundColor Red
+        Write-Host "  Make sure release v$targetVersion exists with transmission-daemon-$targetVersion" -ForegroundColor Yellow
+        exit 1
+    }
 }
 
 # Get libminiupnpc
 Write-Host "[4/6] Preparing libminiupnpc..." -ForegroundColor Yellow
-$libCache = Join-Path $BUILD_DIR "libminiupnpc.so.17"
+$libCache = Join-Path $BUILD_DIR "libminiupnpc.so.17-$targetVersion"
 $libTarget = "$BUILD_DIR\app\lib\libminiupnpc.so.17"
 if ((Test-Path $libCache)) {
     Write-Host "  Using cached" -ForegroundColor Green
     Copy-Item $libCache $libTarget -Force
 } else {
-    Write-Host "  Downloading..." -ForegroundColor Yellow
-    $url = "$GITHUB_BRANCH/builds/$APP_VERSION/libminiupnpc.so.17"
+    Write-Host "  Downloading from release v$targetVersion..." -ForegroundColor Yellow
+    $libUrl = "$GITHUB_RELEASES_URL/v$targetVersion/libminiupnpc.so.17-$targetVersion"
     try {
-        Invoke-WebRequest -Uri $url -OutFile $libCache -UseBasicParsing
+        Invoke-WebRequest -Uri $libUrl -OutFile $libCache -UseBasicParsing
         Copy-Item $libCache $libTarget -Force
         Write-Host "  Downloaded" -ForegroundColor Green
     } catch {
-        Write-Host "  Warning: Not available" -ForegroundColor Yellow
+        Write-Host "  Warning: libminiupnpc.so.17 not available in release v$targetVersion" -ForegroundColor Yellow
     }
 }
 
@@ -170,7 +221,7 @@ if (-not (Test-Path $fnpackPath)) {
 
 Remove-Item "$BUILD_DIR\transmission.fpk" -Force -ErrorAction SilentlyContinue
 Push-Location $BUILD_DIR
-cmd /c "$fnpackPath build" *>&1 | Out-Null
+$buildOutput = cmd /c "$fnpackPath build" 2>&1
 $buildSuccess = Test-Path "transmission.fpk"
 Pop-Location
 
@@ -179,6 +230,8 @@ if ($buildSuccess) {
     Write-Host "  Build successful!" -ForegroundColor Green
 } else {
     Write-Host "  ERROR: Build failed" -ForegroundColor Red
+    Write-Host "  Build output:" -ForegroundColor Yellow
+    Write-Host $buildOutput
     exit 1
 }
 

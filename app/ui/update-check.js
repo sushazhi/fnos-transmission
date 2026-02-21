@@ -201,40 +201,13 @@
         }
         .update-notification-title {
           font-weight: 600;
-          font-size: 22px;
+          font-size: 18px;
           color: #333;
         }
         .update-notification-version {
           font-size: 14px;
           color: #667eea;
           margin-top: 6px;
-        }
-        .update-notification-changelog {
-          font-size: 18px;
-          color: #666;
-          margin-top: 12px;
-          line-height: 1.6;
-          max-height: 120px;
-          overflow-y: auto;
-        }
-        .update-notification-actions {
-          display: flex;
-          gap: 12px;
-          align-items: center;
-        }
-        .update-notification-btn {
-          padding: 12px 24px;
-          border-radius: 6px;
-          font-size: 16px;
-          font-weight: 500;
-          text-decoration: none;
-          cursor: pointer;
-          border: none;
-        }
-        .update-notification-title {
-          font-weight: 600;
-          font-size: 18px;
-          color: #333;
         }
         .update-notification-changelog {
           font-size: 14px;
@@ -258,28 +231,6 @@
           cursor: pointer;
           border: none;
         }
-        .update-notification-changelog {
-          font-size: 12px;
-          color: #666;
-          margin-top: 8px;
-          line-height: 1.5;
-          max-height: 100px;
-          overflow-y: auto;
-        }
-        .update-notification-actions {
-          display: flex;
-          gap: 8px;
-          align-items: center;
-        }
-        .update-notification-btn {
-          padding: 8px 16px;
-          border-radius: 6px;
-          font-size: 12px;
-          font-weight: 500;
-          text-decoration: none;
-          cursor: pointer;
-          border: none;
-        }
         .update-notification-btn-primary {
           background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
           color: white;
@@ -293,14 +244,6 @@
         }
         .update-notification-btn-secondary:hover {
           background: #e8e8e8;
-        }
-        .update-notification-close {
-          background: none;
-          border: none;
-          font-size: 20px;
-          color: #999;
-          cursor: pointer;
-          padding: 0 4px;
         }
         .update-notification-close {
           background: none;
@@ -404,14 +347,17 @@
   async function checkUpdate() {
     log('开始检查更新... 当前版本: ' + CONFIG.currentVersion);
 
-    // 先检查缓存（强制不使用缓存结果，确保每次都检测最新）
+    // 先检查缓存，有效期内直接使用缓存结果
     const cached = getCachedResult();
     if (cached && cached.hasUpdate !== undefined) {
-      log('缓存结果: hasUpdate=' + cached.hasUpdate + ', latest=' + cached.latestVersion);
-      // 强制重新检测，不使用缓存
+      log('使用缓存结果: hasUpdate=' + cached.hasUpdate + ', latest=' + cached.latestVersion);
+      if (cached.hasUpdate) {
+        showUpdateNotification(cached);
+      }
+      return;
     }
 
-    // 强制重新检查 GitHub
+    // 缓存过期或不存在，重新检查 GitHub
     try {
       const apiUrl = `https://api.github.com/repos/${CONFIG.repoOwner}/${CONFIG.repoName}/releases/latest`;
       const response = await fetch(apiUrl, {
@@ -439,8 +385,9 @@
         changelog: data.body || ''
       };
 
-      // 不缓存结果，每次都重新检测
-      log('缓存已禁用，每次都会重新检测');
+      // 缓存结果
+      cacheResult(result);
+      log('结果已缓存');
 
       if (hasUpdate) {
         log('发现新版本，显示通知');

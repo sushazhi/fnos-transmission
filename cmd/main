@@ -104,10 +104,6 @@ EOF
     # 启动transmission-daemon
     echo "启动 ${APP_NAME}..."
     
-    # 设置环境变量后执行
-    export LD_LIBRARY_PATH="${LIB_DIR}:${LD_LIBRARY_PATH}"
-    export TRANSMISSION_WEB_HOME="${UI_DIR}"
-    
     # 确保目录存在
     mkdir -p "$(dirname "$LOG_FILE")"
     mkdir -p "$(dirname "$PID_FILE")"

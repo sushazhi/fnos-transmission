@@ -2,7 +2,6 @@
 # cmd/upgrade_init - Transmission升级初始化脚本
 # 功能：升级前停止服务并备份数据
 
-set -e
 
 APP_NAME="transmission-daemon"
 

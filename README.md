@@ -3,8 +3,8 @@
 🌐 **语言/Language**
 - [简体中文](README.md) | [English](README_EN.md)
 
-[![Transmission Version](https://img.shields.io/badge/Transmission-4.1.0-blue?style=flat-square)](https://github.com/transmission/transmission/releases)
-[![WebUI Version](https://img.shields.io/badge/WebUI-0.0.8-green?style=flat-square)](https://github.com/jianxcao/transmission-web/releases)
+[![Transmission Version](https://img.shields.io/badge/Transmission-4.1.1-blue?style=flat-square)](https://github.com/transmission/transmission/releases)
+[![WebUI Version](https://img.shields.io/badge/WebUI-0.0.9-green?style=flat-square)](https://github.com/jianxcao/transmission-web/releases)
 [![Platform](https://img.shields.io/badge/Platform-fnOS-green?style=flat-square)](https://www.fnnas.com/)
 [![License](https://img.shields.io/badge/License-GPL--2.0-blue?style=flat-square)](https://www.gnu.org/licenses/gpl-2.0.html)
 
@@ -39,7 +39,7 @@
 
 | 组件 | 要求 |
 |------|------|
-| transmission-daemon | 需从 [builds/4.1.0/](builds/4.1.0/) 获取（ARM64 编译产物） |
+| transmission-daemon | 需从 [builds/4.1.1/](builds/4.1.1/) 获取（ARM64 编译产物） |
 
 ### Windows 构建（推荐）
 
@@ -49,11 +49,11 @@
 # 进入项目目录
 cd fnos-transmission
 
-# 运行构建（默认版本 4.1.0）
+# 运行构建（默认版本 4.1.1）
 .\build.ps1
 
 # 指定版本构建
-.\build.ps1 -Version "4.1.0"
+.\build.ps1 -Version "4.1.1"
 ```
 
 ### CI 构建
@@ -68,7 +68,7 @@ GitHub Actions 会自动构建，产物发布在：
 
 | 文件 | 说明 |
 |------|------|
-| `transmission-4.1.0-arm64.fpk` | fnOS 安装包 |
+| `transmission-4.1.1-arm64.fpk` | fnOS 安装包 |
 | `.local-build/` | 构建缓存目录（可删除） |
 
 ---
@@ -151,8 +151,8 @@ fnos-transmission/
 
 | 项目 | 版本 | 用途 | 许可证 |
 |------|------|------|--------|
-| [Transmission](https://github.com/transmission/transmission) | 4.1.0 | BitTorrent 客户端核心 | [GPL-2.0](https://www.gnu.org/licenses/gpl-2.0.html) |
-| [transmission-web](https://github.com/jianxcao/transmission-web) | 0.0.8 | WebUI 界面 | [MIT](https://opensource.org/licenses/MIT) |
+| [Transmission](https://github.com/transmission/transmission) | 4.1.1 | BitTorrent 客户端核心 | [GPL-2.0](https://www.gnu.org/licenses/gpl-2.0.html) |
+| [transmission-web](https://github.com/jianxcao/transmission-web) | 0.0.9 | WebUI 界面 | [MIT](https://opensource.org/licenses/MIT) |
 
 ---
 
@@ -166,10 +166,8 @@ fnos-transmission/
 
 ## 📝 更新日志
 
-### v4.1.0.1
-- ✨ 添加更新检测功能（UI界面自动检测GitHub最新版本）
-- ✨ 支持安装和应用设置中修改端口
-- ✨ 升级至 Transmission 4.1.0
+### v4.1.1
+- ✨ 升级至 Transmission 4.1.1
 
 ---
 

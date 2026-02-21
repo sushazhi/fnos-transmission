@@ -2,8 +2,6 @@
 # cmd/config_callback - Transmission配置回调脚本
 # 功能：应用或更新用户配置的用户名密码
 
-set -e
-
 APP_NAME="transmission-daemon"
 DATA_DIR="${TRIM_PKGVAR}"
 CONFIG_DIR="${DATA_DIR}/settings.json"
