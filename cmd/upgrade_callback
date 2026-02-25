@@ -2,8 +2,6 @@
 # cmd/upgrade_callback - Transmission升级回调脚本
 # 功能：升级后恢复数据、设置权限、验证配置、启动服务
 
-set -e
-
 APP_NAME="transmission-daemon"
 
 # 写入错误日志并退出

@@ -1,7 +1,6 @@
 #!/bin/bash
 # cmd/uninstall_init - Transmission卸载初始化脚本
 
-
 APP_NAME="transmission-daemon"
 echo "正在卸载 ${APP_NAME}..."
 

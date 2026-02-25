@@ -1,8 +1,6 @@
 #!/bin/bash
 # cmd/install_callback - Transmission安装后置脚本
 
-set -e
-
 APP_NAME="transmission-daemon"
 BIN_DIR="${TRIM_APPDEST}/bin"
 LIB_DIR="${TRIM_APPDEST}/lib"
@@ -28,11 +26,15 @@ fi
 RPC_USERNAME="${wizard_rpc_username:-${RPC_USERNAME:-admin}}"
 RPC_PASSWORD="${wizard_rpc_password:-${RPC_PASSWORD:-password}}"
 
-echo "正在应用配置..."
-echo "用户名: ${RPC_USERNAME}"
+# 获取下载目录配置（从向导或环境变量）
+SAVE_PATH="${wizard_save_path:-/vol1/@appshare/transmission/downloads/}"
 
 # 端口配置：优先使用向导变量，其次使用系统变量，最后使用默认值
 WEBUI_PORT="${wizard_app_port:-${TRIM_SERVICE_PORT:-9090}}"
+
+echo "正在应用配置..."
+echo "用户名: ${RPC_USERNAME}"
+echo "下载目录: ${SAVE_PATH}"
 echo "端口: ${WEBUI_PORT}"
 
 # 创建配置目录
@@ -44,12 +46,40 @@ chown -R package:package "$DATA_DIR" 2>/dev/null || true
 chmod 755 "$DATA_DIR" 2>/dev/null || true
 chmod 755 "$DATA_DIR/torrents" 2>/dev/null || true
 
-# 生成配置文件（使用 cat 配合 EOF 注入变量值）
-cat > "$CONFIG_DIR" << EOF
+# 检查配置文件是否已存在（用户卸载时可能保留了配置）
+if [ -f "$CONFIG_DIR" ]; then
+    echo "检测到已有配置文件，保留其他设置并更新端口、用户名、密码、下载目录..."
+
+    # 使用 sed 更新 JSON 配置文件中的指定字段
+    # 更新 download-dir
+    sed -i "s|\"download-dir\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"download-dir\": \"${SAVE_PATH}\"|g" "$CONFIG_DIR"
+
+    # 更新 rpc-port
+    sed -i "s|\"rpc-port\"[[:space:]]*:[[:space:]]*[0-9]*|\"rpc-port\": ${WEBUI_PORT}|g" "$CONFIG_DIR"
+
+    # 更新 rpc-username
+    sed -i "s|\"rpc-username\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"rpc-username\": \"${RPC_USERNAME}\"|g" "$CONFIG_DIR"
+
+    # 更新 rpc-password
+    sed -i "s|\"rpc-password\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"rpc-password\": \"${RPC_PASSWORD}\"|g" "$CONFIG_DIR"
+
+    # 确保禁用临时目录
+    if grep -q '"incomplete-dir-enabled"' "$CONFIG_DIR"; then
+        sed -i 's|"incomplete-dir-enabled"[[:space:]]*:[[:space:]]*[^,]*|"incomplete-dir-enabled": false|g' "$CONFIG_DIR"
+    else
+        # 如果不存在该字段，在 download-dir 后面添加
+        sed -i "s|\"download-dir\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"download-dir\": \"${SAVE_PATH}\",\n    \"incomplete-dir-enabled\": false|g" "$CONFIG_DIR"
+    fi
+
+    echo "配置已更新（保留原有其他设置）"
+else
+    echo "创建新配置文件..."
+
+    # 生成配置文件（使用 cat 配合 EOF 注入变量值）
+    cat > "$CONFIG_DIR" << EOF
 {
-    "download-dir": "/vol1/1000/downloads",
-    "incomplete-dir": "/vol1/1000/temp",
-    "incomplete-dir-enabled": true,
+    "download-dir": "${SAVE_PATH}",
+    "incomplete-dir-enabled": false,
     "dht-enabled": true,
     "pex-enabled": true,
     "lpd-enabled": true,
@@ -70,6 +100,9 @@ cat > "$CONFIG_DIR" << EOF
 }
 EOF
 
+    echo "新配置文件已创建"
+fi
+
 echo ""
 echo "=================================="
 echo "Transmission 安装完成"
@@ -78,7 +111,7 @@ echo ""
 echo "WebUI: http://<NAS_IP>:${WEBUI_PORT}/transmission/"
 echo ""
 echo "用户名: ${RPC_USERNAME}"
-echo ""
+echo "下载目录: ${SAVE_PATH}"
 echo "数据目录: $DATA_DIR"
 echo "配置文件: $CONFIG_DIR"
 echo ""

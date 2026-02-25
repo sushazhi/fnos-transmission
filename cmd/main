@@ -1,8 +1,6 @@
 #!/bin/bash
 # cmd/main - Transmission应用生命周期管理脚本
 
-set -e
-
 APP_NAME="transmission-daemon"
 BIN_DIR="${TRIM_APPDEST}/bin"
 LIB_DIR="${TRIM_APPDEST}/lib"
@@ -50,7 +48,7 @@ start() {
 
     # 创建必要目录
     mkdir -p "$(dirname "$PID_FILE")"
-    mkdir -p "$DATA_DIR"  # 确保数据目录存在
+    mkdir -p "$DATA_DIR"
     mkdir -p "${DATA_DIR}/torrents"
     mkdir -p "${DATA_DIR}/resume"
 
@@ -69,12 +67,12 @@ start() {
         # 从环境变量读取或使用默认值
         RPC_USERNAME="${RPC_USERNAME:-admin}"
         RPC_PASSWORD="${RPC_PASSWORD:-password}"
+        SAVE_PATH="${wizard_save_path:-/vol1/@appshare/transmission/downloads/}"
 
         if ! cat > "$CONFIG_DIR" << EOF
 {
-    "download-dir": "/vol1/1000/downloads",
-    "incomplete-dir": "/vol1/1000/temp",
-    "incomplete-dir-enabled": true,
+    "download-dir": "${SAVE_PATH}",
+    "incomplete-dir-enabled": false,
     "dht-enabled": true,
     "pex-enabled": true,
     "lpd-enabled": true,
@@ -99,6 +97,18 @@ EOF
         fi
 
         echo "默认配置已创建于 $CONFIG_DIR"
+    fi
+
+    # 检查下载目录权限
+    SAVE_PATH=$(grep -o '"download-dir"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_DIR" 2>/dev/null | sed 's/.*:.*"\(.*\)"/\1/')
+
+    if [ -n "$SAVE_PATH" ]; then
+        if [ ! -d "$SAVE_PATH" ]; then
+            error_exit "错误：下载目录（$SAVE_PATH）不存在，请在 fnOS 文件管理中创建该目录后重试"
+        fi
+        if [ ! -r "$SAVE_PATH" ] || [ ! -w "$SAVE_PATH" ]; then
+            error_exit "错误：下载目录（$SAVE_PATH）没有读写权限，请前往 NAS【系统设置 - 应用 - Transmission】设置允许访问的文件夹"
+        fi
     fi
 
     # 启动transmission-daemon

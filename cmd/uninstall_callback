@@ -1,7 +1,6 @@
 #!/bin/bash
 # cmd/uninstall_callback - Transmission卸载回调脚本
 
-
 APP_NAME="transmission-daemon"
 
 echo "正在清理 ${APP_NAME}..."

@@ -106,14 +106,14 @@ if ((Test-Path $daemonCache)) {
     Copy-Item $daemonCache $daemonTarget -Force
 } else {
     Write-Host "  Downloading from release v$targetVersion..." -ForegroundColor Yellow
-    $daemonUrl = "$GITHUB_RELEASES_URL/v$targetVersion/transmission-daemon-$targetVersion"
+    $daemonUrl = "$GITHUB_RELEASES_URL/v$targetVersion/transmission-daemon"
     try {
         Invoke-WebRequest -Uri $daemonUrl -OutFile $daemonCache -UseBasicParsing
         Copy-Item $daemonCache $daemonTarget -Force
         Write-Host "  Downloaded" -ForegroundColor Green
     } catch {
         Write-Host "  ERROR: Failed to download transmission-daemon from release v$targetVersion" -ForegroundColor Red
-        Write-Host "  Make sure release v$targetVersion exists with transmission-daemon-$targetVersion" -ForegroundColor Yellow
+        Write-Host "  Make sure release v$targetVersion exists with transmission-daemon" -ForegroundColor Yellow
         exit 1
     }
 }
@@ -127,7 +127,7 @@ if ((Test-Path $libCache)) {
     Copy-Item $libCache $libTarget -Force
 } else {
     Write-Host "  Downloading from release v$targetVersion..." -ForegroundColor Yellow
-    $libUrl = "$GITHUB_RELEASES_URL/v$targetVersion/libminiupnpc.so.17-$targetVersion"
+    $libUrl = "$GITHUB_RELEASES_URL/v$targetVersion/libminiupnpc.so.17"
     try {
         Invoke-WebRequest -Uri $libUrl -OutFile $libCache -UseBasicParsing
         Copy-Item $libCache $libTarget -Force

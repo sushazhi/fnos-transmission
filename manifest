@@ -1,5 +1,5 @@
 appname = transmission
-version = 4.1.1
+version = 4.1.1.1
 display_name = Transmission
 desc = <b>轻量级BitTorrent下载工具</b>，支持磁力链接、种子文件、DHT/PEX/LSD P2P网络。<br><br>✨ <b>默认启用Transmission Web</b>，现代简洁，响应式设计。<br><br>📋 <b>端口修改：</b>安装或应用设置中可自定义端口。<br><br>🐛 <b>问题反馈：</b><a href="https://github.com/sushazhi/fnos-transmission/issues" target="_blank">GitHub Issues</a>
 
@@ -25,5 +25,5 @@ checkport = true
 desktop_uidir = ui
 desktop_applaunchname = transmission.Application
 
-  # 更新日志
-  changelog = 升级至 Transmission 4.1.1
+# 更新日志
+changelog = 更新日志<br>升级至 Transmission 4.1.1<br>安装时需配置下载目录（目录必须存在）

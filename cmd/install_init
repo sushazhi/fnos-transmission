@@ -1,7 +1,21 @@
 #!/bin/bash
 # cmd/install_init - Transmission安装初始化脚本
-# 注意：目录和配置创建由 install_callback 处理
+# 功能：验证安装前的必要条件
 
 echo "Transmission install_init started"
-echo "install_init 完成，等待 install_callback 处理"
+
+# 获取下载目录配置
+SAVE_PATH="${wizard_save_path:-/vol1/@appshare/transmission/downloads/}"
+
+echo "Checking save path: $SAVE_PATH"
+
+# 验证下载目录是否存在
+if [ ! -d "$SAVE_PATH" ]; then
+    echo "错误：下载目录（$SAVE_PATH）不存在" > "$TRIM_TEMP_LOGFILE"
+    echo "请在 fnOS 文件管理中创建该目录后重试" >> "$TRIM_TEMP_LOGFILE"
+    exit 1
+fi
+
+echo "Path validation passed"
+echo "Transmission install_init completed"
 exit 0
