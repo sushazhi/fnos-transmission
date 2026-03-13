@@ -84,7 +84,7 @@ jobs:
           VERSION="${{ env.TRANSMISSION_VERSION }}"
 
           if [ "${{ env.WEBUI_VERSION }}" = "latest" ]; then
-            WEBUI_VERSION=$(curl -s https://api.github.com/repos/jianxcao/transmission-web/releases/latest | sed -n 's/.*"tag_name": "v\([^"]*\)".*/\1/p')
+            WEBUI_VERSION=$(curl -s https://api.github.com/repos/sushazhi/transmission-web/releases/latest | sed -n 's/.*"tag_name": "v\([^"]*\)".*/\1/p')
           else
             WEBUI_VERSION="${{ env.WEBUI_VERSION }}"
           fi
@@ -149,7 +149,7 @@ jobs:
 
           # Download in parallel
           wget -q "https://github.com/transmission/transmission/releases/download/${{ steps.versions.outputs.TRANSMISSION_VERSION }}/transmission-${{ steps.versions.outputs.TRANSMISSION_VERSION }}.tar.xz" -O /tmp/transmission.tar.xz &
-          wget -q "https://github.com/jianxcao/transmission-web/releases/download/v${{ steps.versions.outputs.WEBUI_VERSION }}/transmission-web-v${{ steps.versions.outputs.WEBUI_VERSION }}.zip" -O /tmp/webui.zip &
+          wget -q "https://github.com/sushazhi/transmission-web/releases/download/v${{ steps.versions.outputs.WEBUI_VERSION }}/transmission-web-v${{ steps.versions.outputs.WEBUI_VERSION }}.zip" -O /tmp/webui.zip &
           wait
 
           if [ ! -s /tmp/transmission.tar.xz ]; then
@@ -282,11 +282,11 @@ jobs:
             echo "WebUI not found, downloading..."
             if [ -z "$WEBUI_VERSION" ]; then
               echo "Resolving latest WebUI version from API..."
-              WEBUI_VERSION=$(curl -s https://api.github.com/repos/jianxcao/transmission-web/releases/latest | sed -n 's/.*"tag_name": "v\([^"]*\)".*/\1/p')
+              WEBUI_VERSION=$(curl -s https://api.github.com/repos/sushazhi/transmission-web/releases/latest | sed -n 's/.*"tag_name": "v\([^"]*\)".*/\1/p')
             fi
 
             echo "Downloading WebUI v${WEBUI_VERSION}..."
-            wget -v "https://github.com/jianxcao/transmission-web/releases/download/v${WEBUI_VERSION}/transmission-web-v${WEBUI_VERSION}.zip" -O /tmp/webui.zip
+            wget -v "https://github.com/sushazhi/transmission-web/releases/download/v${WEBUI_VERSION}/transmission-web-v${WEBUI_VERSION}.zip" -O /tmp/webui.zip
             if [ $? -ne 0 ] || [ ! -s /tmp/webui.zip ]; then
               echo "ERROR: Failed to download WebUI v${WEBUI_VERSION}"
               exit 1

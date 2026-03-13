@@ -50,13 +50,19 @@ echo "端口: ${WEBUI_PORT}"
 
 # 读取现有配置或创建新配置
 if [ -f "$CONFIG_DIR" ]; then
-    echo "更新现有配置..."
+    echo "检测到已有配置文件，保留其他设置并更新用户名、密码、端口..."
+    
+    # 使用 sed 更新 JSON 配置文件中的指定字段，保留其他用户配置
+    sed -i "s|\"rpc-port\"[[:space:]]*:[[:space:]]*[0-9]*|\"rpc-port\": ${WEBUI_PORT}|g" "$CONFIG_DIR"
+    sed -i "s|\"rpc-username\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"rpc-username\": \"${RPC_USERNAME}\"|g" "$CONFIG_DIR"
+    sed -i "s|\"rpc-password\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"rpc-password\": \"${RPC_PASSWORD}\"|g" "$CONFIG_DIR"
+    
+    echo "配置更新完成，已保留用户的其他设置"
 else
-    echo "创建新配置..."
+    echo "创建新配置文件..."
     mkdir -p "$(dirname "$CONFIG_DIR")"
-fi
-
-cat > "$CONFIG_DIR" << EOF
+    
+    cat > "$CONFIG_DIR" << EOF
 {
     "download-dir": "/vol1/1000/downloads",
     "incomplete-dir": "/vol1/1000/temp",
@@ -80,6 +86,7 @@ cat > "$CONFIG_DIR" << EOF
     "utp-enabled": true
 }
 EOF
+fi
 
 echo ""
 echo "==================================="

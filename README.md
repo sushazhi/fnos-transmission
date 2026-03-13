@@ -8,7 +8,7 @@
 [![Platform](https://img.shields.io/badge/Platform-fnOS-green?style=flat-square)](https://www.fnnas.com/)
 [![License](https://img.shields.io/badge/License-GPL--2.0-blue?style=flat-square)](https://www.gnu.org/licenses/gpl-2.0.html)
 
-> 📌 **注意**：本应用目前仅支持**ARM64架构**，系统要求 **fnOS v1.1.19
+> 📌 **注意**：本应用目前仅支持 **ARM64 架构**，系统要求 **fnOS v1.1.19 及以上**。
 
 ---
 
@@ -161,6 +161,12 @@ fnos-transmission/
 - [报告问题](https://github.com/sushazhi/fnos-transmission/issues) - GitHub Issues
 - [飞牛论坛](https://club.fnnas.com/) - 社区讨论
 - [fnOS 文档](https://docs.fnnas.com/) - 官方文档
+
+---
+
+## 🧭 改进与规划建议
+
+- [改进建议清单](docs/IMPROVEMENT_SUGGESTIONS.md) - 包含基础与进阶的稳定性、安全性、体验与工程化改进路线
 
 ---
 

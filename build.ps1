@@ -63,7 +63,7 @@ $ARCH = "arm64"
 $BUILD_DIR = Join-Path $PROJECT_DIR ".local-build"
 $FNPACK_URL = "https://static2.fnnas.com/fnpack/fnpack-1.2.1-windows-amd64"
 $GITHUB_RELEASES_URL = "https://github.com/sushazhi/fnos-transmission/releases/download"
-$WEBUI_BASE = "https://ghfast.top/https://github.com/jianxcao/transmission-web/releases/download"
+$WEBUI_BASE = "https://ghfast.top/https://github.com/sushazhi/transmission-web/releases/download"
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  Transmission for fnOS - Local Build" -ForegroundColor Cyan
@@ -139,7 +139,7 @@ if ((Test-Path $libCache)) {
 
 # Get WebUI version from GitHub
 Write-Host "[5/6] Preparing WebUI..." -ForegroundColor Yellow
-$WEBUI_API_URL = "https://api.github.com/repos/jianxcao/transmission-web/releases/latest"
+$WEBUI_API_URL = "https://api.github.com/repos/sushazhi/transmission-web/releases/latest"
 try {
     $webuiResponse = Invoke-WebRequest -Uri $WEBUI_API_URL -UseBasicParsing -TimeoutSec 30
     $webuiJson = $webuiResponse | ConvertFrom-Json
