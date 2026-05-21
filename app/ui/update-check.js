@@ -28,7 +28,16 @@
   const CACHE_KEY = 'transmission-update-cache';
   const IGNORE_KEY = 'transmission-update-ignore';
   const CLOSE_TIME_KEY = 'transmission-update-close-time';
+  const VERSION_KEY = 'transmission-update-version';
   const CLOSE_DURATION = 24 * 60 * 60 * 1000;
+
+  // 版本变更时自动清缓存
+  try {
+    if (localStorage.getItem(VERSION_KEY) !== CONFIG.currentVersion) {
+      localStorage.removeItem(CACHE_KEY);
+      localStorage.setItem(VERSION_KEY, CONFIG.currentVersion);
+    }
+  } catch (e) {}
 
   // 记录当前版本用于调试
   if (isDebug) {

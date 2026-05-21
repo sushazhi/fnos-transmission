@@ -194,22 +194,33 @@ def _perform_update(fpk_url):
         os.makedirs(update_dir, exist_ok=True)
         fpk_path = os.path.join(update_dir, "transmission.fpk")
         download_url = UPDATE_PROXY + fpk_url
-        urllib.request.urlretrieve(download_url, fpk_path)
-        if os.path.getsize(fpk_path) == 0:
-            raise Exception("下载文件为空")
-        _update_status["message"] = "正在解压更新包..."
-        _update_status["progress"] = 60
-        subprocess.run(["tar", "-xf", fpk_path, "-C", update_dir], check=True, timeout=120)
-        os.unlink(fpk_path)
+        req = urllib.request.Request(download_url)
+        resp = urllib.request.urlopen(req, timeout=120)
+        total = int(resp.headers.get("Content-Length", 0))
+        downloaded = 0
+        with open(fpk_path, 'wb') as f:
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                f.write(chunk)
+                downloaded += len(chunk)
+                if total > 0:
+                    pct = 10 + int(downloaded / total * 50)
+                    _update_status["progress"] = pct
+                    _update_status["message"] = f"正在下载... {downloaded//1024}KB/{total//1024}KB"
+        resp.close()
+        if not os.path.exists(fpk_path) or os.path.getsize(fpk_path) < 1024:
+            raise Exception("下载文件无效")
         _update_status["message"] = "正在安装更新..."
-        _update_status["progress"] = 80
+        _update_status["progress"] = 70
         vol_match = re.search(r'/vol(\d+)/', update_dir)
         vol_num = vol_match.group(1) if vol_match else "1"
         subprocess.run(["appcenter-cli", "default-volume", vol_num], cwd=update_dir, timeout=60)
         config_env = os.path.join(update_dir, "config.env")
         with open(config_env, 'w') as f:
             f.write(f"wizard_data_action=keep\n")
-        proc = subprocess.Popen(["appcenter-cli", "install-local", "--env", "config.env", "--volume", vol_num],
+        proc = subprocess.Popen(["appcenter-cli", "install-local", fpk_path, "--env", "config.env", "--volume", vol_num],
                                 cwd=update_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         proc.detach = True
         _update_status["message"] = "更新完成，应用将重启..."
