@@ -1,10 +1,13 @@
 # build.ps1 - Transmission for fnOS Local Build
 # Usage:
-#   .\build.ps1                           # Build with default transmission version
-#   .\build.ps1 -TransmissionVersion 4.0.5 # Build with specific transmission version
-#   .\build.ps1 -ListVersions              # List available transmission versions
+#   .\build.ps1                                 # Build with default version from manifest
+#   .\build.ps1 -AppVersion 4.1.1               # Build with custom app version (output filename)
+#   .\build.ps1 -TransmissionVersion 4.0.5      # Build with specific transmission daemon version
+#   .\build.ps1 -AppVersion 4.1.1 -TransmissionVersion 4.0.5  # Custom both
+#   .\build.ps1 -ListVersions                    # List available transmission versions
 
 param(
+    [string]$AppVersion = "",
     [string]$TransmissionVersion = "",
     [switch]$ListVersions
 )
@@ -30,6 +33,12 @@ if (-not $Version) {
 }
 
 $APP_VERSION = $Version
+
+# Override app version if -AppVersion specified (without modifying manifest)
+if ($AppVersion) {
+    $APP_VERSION = $AppVersion
+    Write-Host "  App version overridden to: $APP_VERSION" -ForegroundColor Yellow
+}
 
 # Extract transmission version (first 3 parts of APP_VERSION)
 # e.g., 4.1.0.1 -> 4.1.0, 4.1.1 -> 4.1.1
@@ -172,12 +181,8 @@ if (Test-Path "$BUILD_DIR\app\ui\transmission") {
 Write-Host "  Injecting update check..." -ForegroundColor Gray
 $indexHtml = Get-Content "$BUILD_DIR\app\ui\index.html" -Raw
 
-# Read version from manifest
-$manifestContent = Get-Content "$BUILD_DIR\manifest" -Raw
-$versionMatch = $manifestContent | Select-String 'version\s*=\s*(\S+)'
-if ($versionMatch) {
-    $appVersion = $versionMatch.Matches.Groups[1].Value.Trim()
-}
+# Use $APP_VERSION (which may be overridden by -AppVersion)
+$appVersion = $APP_VERSION
 
 # Inject version and update script before </body>
 $injectScript = @"
