@@ -18,8 +18,8 @@ GATEWAY_SOCK="${TRIM_APPDEST}/transmission.sock"
 export LD_LIBRARY_PATH="${LIB_DIR}:${LD_LIBRARY_PATH}"
 export TRANSMISSION_WEB_HOME="${UI_DIR}"
 
-# 端口配置：优先使用向导变量，其次使用系统变量，最后使用默认值
-WEBUI_PORT="${wizard_app_port:-${TRIM_SERVICE_PORT:-9091}}"
+# 网关模式：端口固定内部值，不暴露给用户
+WEBUI_PORT="9091"
 
 # 检查环境变量
 if [ -z "$TRIM_APPDEST" ]; then
@@ -169,10 +169,14 @@ EOF
 
     if [ -n "$SAVE_PATH" ]; then
         if [ ! -d "$SAVE_PATH" ]; then
-            error_exit "错误：下载目录（$SAVE_PATH）不存在，请在 fnOS 文件管理中创建该目录后重试"
+            if echo "$SAVE_PATH" | grep -qE '@appshare'; then
+                mkdir -p "$SAVE_PATH" 2>/dev/null && echo "已创建下载目录：$SAVE_PATH" >> "$LOG_FILE" || echo "警告：无法创建下载目录（$SAVE_PATH）" >> "$LOG_FILE"
+            else
+                error_exit "错误：下载目录（$SAVE_PATH）不存在，请在 fnOS 文件管理中创建该目录后重试"
+            fi
         fi
-        if [ ! -r "$SAVE_PATH" ] || [ ! -w "$SAVE_PATH" ]; then
-            error_exit "错误：下载目录（$SAVE_PATH）没有读写权限，请前往 NAS【系统设置 - 应用 - Transmission】设置允许访问的文件夹"
+        if [ -d "$SAVE_PATH" ] && { [ ! -r "$SAVE_PATH" ] || [ ! -w "$SAVE_PATH" ]; }; then
+            echo "警告：下载目录（$SAVE_PATH）没有读写权限，请前往 NAS【系统设置 - 应用 - Transmission】设置允许访问的文件夹" >> "$LOG_FILE"
         fi
     fi
 

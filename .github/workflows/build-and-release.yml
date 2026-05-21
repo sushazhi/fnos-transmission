@@ -305,6 +305,14 @@ jobs:
           # Remove transmission subfolder if it exists
           rm -rf app/ui/transmission 2>/dev/null || true
 
+          # Copy gateway proxy script
+          if [ -f "app/bin/gateway-proxy.py" ]; then
+            echo "gateway-proxy.py already in app/bin"
+          elif [ -f "${{ github.workspace }}/app/bin/gateway-proxy.py" ]; then
+            cp "${{ github.workspace }}/app/bin/gateway-proxy.py" app/bin/
+            echo "Copied gateway-proxy.py"
+          fi
+
           echo "App structure prepared:"
           echo "Binaries:"
           ls -lh app/bin/

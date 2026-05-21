@@ -205,6 +205,10 @@ if (Test-Path "$PROJECT_DIR\app\ui\images") {
 if (Test-Path "$PROJECT_DIR\app\ui\update-check.js") {
     Copy-Item "$PROJECT_DIR\app\ui\update-check.js" "$BUILD_DIR\app\ui\" -Force
 }
+# Copy gateway proxy
+if (Test-Path "$PROJECT_DIR\app\bin\gateway-proxy.py") {
+    Copy-Item "$PROJECT_DIR\app\bin\gateway-proxy.py" "$BUILD_DIR\app\bin\" -Force
+}
 Write-Host "  WebUI ready" -ForegroundColor Green
 
 # Build

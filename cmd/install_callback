@@ -29,13 +29,12 @@ RPC_PASSWORD="${wizard_rpc_password:-${RPC_PASSWORD:-password}}"
 # 获取下载目录配置（从向导或环境变量）
 SAVE_PATH="${wizard_save_path:-/vol1/@appshare/transmission/downloads/}"
 
-# 端口配置：优先使用向导变量，其次使用系统变量，最后使用默认值
-WEBUI_PORT="${wizard_app_port:-${TRIM_SERVICE_PORT:-9091}}"
+# 网关模式：端口固定内部值
+WEBUI_PORT="9091"
 
 echo "正在应用配置..."
 echo "用户名: ${RPC_USERNAME}"
 echo "下载目录: ${SAVE_PATH}"
-echo "端口: ${WEBUI_PORT}"
 
 # 创建配置目录
 mkdir -p "$DATA_DIR"
@@ -48,14 +47,11 @@ chmod 755 "$DATA_DIR/torrents" 2>/dev/null || true
 
 # 检查配置文件是否已存在（用户卸载时可能保留了配置）
 if [ -f "$CONFIG_DIR" ]; then
-    echo "检测到已有配置文件，保留其他设置并更新端口、用户名、密码、下载目录..."
+    echo "检测到已有配置文件，保留其他设置并更新用户名、密码、下载目录..."
 
     # 使用 sed 更新 JSON 配置文件中的指定字段
     # 更新 download-dir
     sed -i "s|\"download-dir\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"download-dir\": \"${SAVE_PATH}\"|g" "$CONFIG_DIR"
-
-    # 更新 rpc-port
-    sed -i "s|\"rpc-port\"[[:space:]]*:[[:space:]]*[0-9]*|\"rpc-port\": ${WEBUI_PORT}|g" "$CONFIG_DIR"
 
     # 更新 rpc-username
     sed -i "s|\"rpc-username\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"rpc-username\": \"${RPC_USERNAME}\"|g" "$CONFIG_DIR"
@@ -66,7 +62,7 @@ if [ -f "$CONFIG_DIR" ]; then
     # 网关模式：禁用RPC认证（网关已认证）、绑定127.0.0.1
     sed -i 's|"rpc-authentication-required"[[:space:]]*:[[:space:]]*[^,]*|"rpc-authentication-required": false|g' "$CONFIG_DIR"
     if ! grep -q '"rpc-bind-address"' "$CONFIG_DIR"; then
-        sed -i "s|\"rpc-port\"[[:space:]]*:[[:space:]]*[0-9]*|\"rpc-port\": ${WEBUI_PORT},\n    \"rpc-bind-address\": \"127.0.0.1\"|g" "$CONFIG_DIR"
+        sed -i '/"rpc-port"/a\    "rpc-bind-address": "127.0.0.1",' "$CONFIG_DIR"
     else
         sed -i 's|"rpc-bind-address"[[:space:]]*:[[:space:]]*"[^"]*"|"rpc-bind-address": "127.0.0.1"|g' "$CONFIG_DIR"
     fi

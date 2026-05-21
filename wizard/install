@@ -12,27 +12,11 @@
       },
       {
         "type": "tips",
-        "helpText": "🌐 <b>访问地址：</b>http://<NAS_IP>:9090/transmission/"
+        "helpText": "🌐 <b>访问地址：</b>通过fnOS桌面图标打开，或访问 http://<NAS_IP>:5666/app/transmission/transmission/web/"
       },
       {
         "type": "tips",
         "helpText": "🐛 <b>问题反馈：</b><a href='https://github.com/sushazhi/fnos-transmission/issues' target='_blank'>GitHub Issues</a>"
-      },
-      {
-        "type": "text",
-        "field": "wizard_app_port",
-        "label": "应用端口",
-        "initValue": "9090",
-        "rules": [
-          {
-            "required": true,
-            "message": "请输入端口号"
-          },
-          {
-            "pattern": "^[0-9]+$",
-            "message": "端口号必须是数字"
-          }
-        ]
       }
     ]
   },

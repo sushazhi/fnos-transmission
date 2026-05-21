@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import http.server, socket, sys, os, signal, re, time, threading, gzip, zlib, select, json
 from http.client import HTTPConnection
+from urllib.parse import urlparse, urlunparse
 
 SOCK_PATH = sys.argv[1]
 TARGET_HOST = sys.argv[2]
@@ -15,15 +16,36 @@ _port_lock = threading.Lock()
 INJECT_SCRIPT = b'''<script>
 (function(){
 var P="/app/transmission";
+try{var k=Object.keys(localStorage);for(var i=0;i<k.length;i++){var v=localStorage.getItem(k[i]);if(v&&v.includes&&v.includes(':9091')){localStorage.removeItem(k[i]);}}}catch(e){}
 var _f=window.fetch;
 window.fetch=function(u,o){
-if(typeof u==='string'&&u.charAt(0)==='/'&&!u.startsWith(P)){u=P+u;}
+if(typeof u==='string'){
+if(u.charAt(0)==='/'&&!u.startsWith(P)){u=P+u;}
+else if(u.startsWith('http')){
+try{var _u=new URL(u,location.origin);if(_u.host===location.host||_u.port==='9091'){u=P+_u.pathname;if(_u.search)u+=_u.search;}}catch(e){}
+}
+}
 return _f.call(this,u,o);
 };
 var _o=XMLHttpRequest.prototype.open;
 XMLHttpRequest.prototype.open=function(m,u,s){
-if(typeof u==='string'&&u.charAt(0)==='/'&&!u.startsWith(P)){arguments[1]=P+u;}
+if(typeof u==='string'){
+if(u.charAt(0)==='/'&&!u.startsWith(P)){arguments[1]=P+u;}
+else if(u.startsWith('http')){
+try{var _u=new URL(u,location.origin);if(_u.host===location.host||_u.port==='9091'){arguments[1]=P+_u.pathname;if(_u.search)arguments[1]+=_u.search;}}catch(e){}
+}
+}
 return _o.apply(this,arguments);
+};
+var _ps=history.pushState;
+history.pushState=function(s,t,u){
+if(typeof u==='string'&&u.charAt(0)==='/'&&!u.startsWith(P)){u=P+u;}
+return _ps.call(this,s,t,u);
+};
+var _rs=history.replaceState;
+history.replaceState=function(s,t,u){
+if(typeof u==='string'&&u.charAt(0)==='/'&&!u.startsWith(P)){u=P+u;}
+return _rs.call(this,s,t,u);
 };
 var _cw=window.WebSocket;
 if(_cw){
@@ -64,8 +86,32 @@ def decompress(data, encoding):
 def rewrite_html(data, prefix):
     data = re.sub(rb'<head\b[^>]*>', lambda m: m.group(0) + INJECT_SCRIPT, data, count=1)
     p = prefix.encode()
+    data = re.sub(rb'<base\s+href=["\']/', rb'<base href="' + p + rb'/', data, count=1)
     data = re.sub(rb'(src|href|action)=([\'"])/', rb'\1=\2' + p + rb'/', data)
     return data
+
+def rewrite_js(data, prefix):
+    p = prefix.encode()
+    for old in [b'"/transmission/rpc"', b'"/transmission/web"', b'"/transmission/web/"', b'"/transmission/"',
+                b"'/transmission/rpc'", b"'/transmission/web'", b"'/transmission/web/'", b"'/transmission/'",
+                b"`/transmission/rpc`", b"`/transmission/web`", b"`/transmission/web/`", b"`/transmission/`"]:
+        stripped = old[1:-1]
+        new = old[:1] + p + stripped + old[-1:]
+        data = data.replace(old, new)
+    return data
+
+def rewrite_location(value, prefix):
+    if value.startswith("/"):
+        if not value.startswith(prefix):
+            return prefix + value
+        return value
+    elif value.startswith("http://") or value.startswith("https://"):
+        parsed = urlparse(value)
+        if parsed.path.startswith(prefix):
+            return parsed.path
+        elif parsed.path.startswith("/"):
+            return prefix + parsed.path
+    return value
 
 def get_target_port():
     global _current_port, _port_check_time
@@ -155,35 +201,67 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         if content_length:
             body = self.rfile.read(int(content_length))
 
-        try:
-            conn.request(self.command, path, body, headers)
-            resp = conn.getresponse()
-        except Exception as e:
-            self.send_error(502, str(e))
-            conn.close()
+        max_redirects = 5
+        for _ in range(max_redirects):
+            try:
+                conn.request(self.command, path, body, headers)
+                resp = conn.getresponse()
+            except Exception as e:
+                self.send_error(502, str(e))
+                conn.close()
+                return
+
+            if resp.status in (301, 302, 303, 307, 308):
+                loc = resp.getheader("Location", "")
+                resp.read()
+                conn.close()
+                if not loc:
+                    self.send_error(502, "redirect without location")
+                    return
+                if loc.startswith("http://") or loc.startswith("https://"):
+                    parsed = urlparse(loc)
+                    path = parsed.path or "/"
+                    if parsed.query:
+                        path += "?" + parsed.query
+                elif loc.startswith("/"):
+                    path = loc
+                else:
+                    path = path.rsplit("/", 1)[0] + "/" + loc
+                conn = self._get_backend()
+                body = None
+                continue
+            break
+        else:
+            self.send_error(502, "too many redirects")
             return
 
         try:
             all_resp_headers = resp.getheaders()
             is_html = any("text/html" in v for k, v in all_resp_headers if k.lower() == "content-type")
+            is_js = any("javascript" in v for k, v in all_resp_headers if k.lower() == "content-type")
             content_encoding = next((v for k, v in all_resp_headers if k.lower() == "content-encoding"), None)
 
             resp_headers = []
             for key, value in all_resp_headers:
                 kl = key.lower()
-                if kl == "content-encoding" and is_html:
+                if kl == "content-encoding" and (is_html or is_js):
                     continue
                 if kl in ("transfer-encoding", "connection", "content-length"):
                     continue
+                if kl in ("location", "content-location"):
+                    value = rewrite_location(value, PREFIX)
                 resp_headers.append((key, value))
 
-            if is_html:
+            if is_html or is_js:
                 data = resp.read()
                 if content_encoding:
                     raw = decompress(data, content_encoding)
                     if raw is not None:
                         data = raw
-                data = rewrite_html(data, PREFIX)
+                if is_html:
+                    data = rewrite_html(data, PREFIX)
+                if is_js:
+                    data = rewrite_js(data, PREFIX)
                 self.send_response(resp.status)
                 for key, value in resp_headers:
                     self.send_header(key, value)
