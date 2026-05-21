@@ -101,31 +101,29 @@ jobs:
           BUILDS_DIR="/tmp/builds/${TRANSMISSION_VERSION}"
           mkdir -p "$BUILDS_DIR"
 
-          # Try to download from release (only for 3-part versions)
-          if [ "${{ env.IS_RELEASE_VERSION }}" = "true" ]; then
-            echo "Checking for prebuilt binaries in release v${TRANSMISSION_VERSION}..."
-            
-            # Try to download transmission-daemon
-            if gh release download "v${TRANSMISSION_VERSION}" \
-              --pattern "transmission-daemon-${TRANSMISSION_VERSION}" \
-              --dir "$BUILDS_DIR" \
-              --clobber 2>/dev/null; then
-              mv "$BUILDS_DIR/transmission-daemon-${TRANSMISSION_VERSION}" "$BUILDS_DIR/transmission-daemon"
-              echo "Downloaded transmission-daemon from release"
-            else
-              echo "transmission-daemon not found in release"
-            fi
-            
-            # Try to download libminiupnpc.so.17
-            if gh release download "v${TRANSMISSION_VERSION}" \
-              --pattern "libminiupnpc.so.17-${TRANSMISSION_VERSION}" \
-              --dir "$BUILDS_DIR" \
-              --clobber 2>/dev/null; then
-              mv "$BUILDS_DIR/libminiupnpc.so.17-${TRANSMISSION_VERSION}" "$BUILDS_DIR/libminiupnpc.so.17"
-              echo "Downloaded libminiupnpc.so.17 from release"
-            else
-              echo "libminiupnpc.so.17 not found in release"
-            fi
+          # Always try to download prebuilt binaries from release v{3-part-version}
+          echo "Checking for prebuilt binaries in release v${TRANSMISSION_VERSION}..."
+          
+          # Try to download transmission-daemon
+          if gh release download "v${TRANSMISSION_VERSION}" \
+            --pattern "transmission-daemon-${TRANSMISSION_VERSION}" \
+            --dir "$BUILDS_DIR" \
+            --clobber 2>/dev/null; then
+            mv "$BUILDS_DIR/transmission-daemon-${TRANSMISSION_VERSION}" "$BUILDS_DIR/transmission-daemon"
+            echo "Downloaded transmission-daemon from release"
+          else
+            echo "transmission-daemon not found in release"
+          fi
+          
+          # Try to download libminiupnpc.so.17
+          if gh release download "v${TRANSMISSION_VERSION}" \
+            --pattern "libminiupnpc.so.17-${TRANSMISSION_VERSION}" \
+            --dir "$BUILDS_DIR" \
+            --clobber 2>/dev/null; then
+            mv "$BUILDS_DIR/libminiupnpc.so.17-${TRANSMISSION_VERSION}" "$BUILDS_DIR/libminiupnpc.so.17"
+            echo "Downloaded libminiupnpc.so.17 from release"
+          else
+            echo "libminiupnpc.so.17 not found in release"
           fi
 
           # Check if we have the required binaries

@@ -30,7 +30,7 @@ RPC_PASSWORD="${wizard_rpc_password:-${RPC_PASSWORD:-password}}"
 SAVE_PATH="${wizard_save_path:-/vol1/@appshare/transmission/downloads/}"
 
 # 网关模式：端口固定内部值
-WEBUI_PORT="9091"
+WEBUI_PORT="9090"
 
 echo "正在应用配置..."
 echo "用户名: ${RPC_USERNAME}"

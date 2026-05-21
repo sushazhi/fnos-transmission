@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import http.server, socket, sys, os, signal, re, time, threading, gzip, zlib, select, json
+import http.server, socket, sys, os, signal, re, time, threading, gzip, zlib, select, json, subprocess
 from http.client import HTTPConnection
 from urllib.parse import urlparse, urlunparse
 
@@ -16,13 +16,13 @@ _port_lock = threading.Lock()
 INJECT_SCRIPT = b'''<script>
 (function(){
 var P="/app/transmission";
-try{var k=Object.keys(localStorage);for(var i=0;i<k.length;i++){var v=localStorage.getItem(k[i]);if(v&&v.includes&&v.includes(':9091')){localStorage.removeItem(k[i]);}}}catch(e){}
+try{var k=Object.keys(localStorage);for(var i=0;i<k.length;i++){var v=localStorage.getItem(k[i]);if(v&&v.includes&&(v.includes(':9090')||v.includes(':9091'))){localStorage.removeItem(k[i]);}}}catch(e){}
 var _f=window.fetch;
 window.fetch=function(u,o){
 if(typeof u==='string'){
 if(u.charAt(0)==='/'&&!u.startsWith(P)){u=P+u;}
 else if(u.startsWith('http')){
-try{var _u=new URL(u,location.origin);if(_u.host===location.host||_u.port==='9091'){u=P+_u.pathname;if(_u.search)u+=_u.search;}}catch(e){}
+try{var _u=new URL(u,location.origin);if(_u.host===location.host||_u.port==='9090'||_u.port==='9091'){u=P+_u.pathname;if(_u.search)u+=_u.search;}}catch(e){}
 }
 }
 return _f.call(this,u,o);
@@ -32,7 +32,7 @@ XMLHttpRequest.prototype.open=function(m,u,s){
 if(typeof u==='string'){
 if(u.charAt(0)==='/'&&!u.startsWith(P)){arguments[1]=P+u;}
 else if(u.startsWith('http')){
-try{var _u=new URL(u,location.origin);if(_u.host===location.host||_u.port==='9091'){arguments[1]=P+_u.pathname;if(_u.search)arguments[1]+=_u.search;}}catch(e){}
+try{var _u=new URL(u,location.origin);if(_u.host===location.host||_u.port==='9090'||_u.port==='9091'){arguments[1]=P+_u.pathname;if(_u.search)arguments[1]+=_u.search;}}catch(e){}
 }
 }
 return _o.apply(this,arguments);
@@ -135,6 +135,91 @@ def get_target_port():
 if os.path.exists(SOCK_PATH):
     os.unlink(SOCK_PATH)
 
+UPDATE_REPO = "sushazhi/fnos-transmission"
+UPDATE_API = "https://api.github.com"
+UPDATE_PROXY = "https://ghfast.top/"
+_update_status = {"updating": False, "progress": 0, "message": ""}
+_update_lock = threading.Lock()
+_cached_version = {"expires": 0, "data": None}
+
+def _compare_version(v1, v2):
+    p1 = [int(x) for x in v1.split('.')]
+    p2 = [int(x) for x in v2.split('.')]
+    for i in range(max(len(p1), len(p2))):
+        n1 = p1[i] if i < len(p1) else 0
+        n2 = p2[i] if i < len(p2) else 0
+        if n2 > n1: return 1
+        if n2 < n1: return -1
+    return 0
+
+def _fetch_latest_version():
+    import urllib.request
+    url = f"{UPDATE_API}/repos/{UPDATE_REPO}/releases/latest"
+    req = urllib.request.Request(url, headers={"User-Agent": "fnos-transmission-updater", "Accept": "application/vnd.github.v3+json"})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        data = json.loads(resp.read())
+    version = data.get("tag_name", "").lstrip("v")
+    fpk_asset = None
+    for a in data.get("assets", []):
+        if a.get("name", "").endswith(".fpk") and "transmission" in a.get("name", ""):
+            fpk_asset = a
+            break
+    return {
+        "version": version,
+        "changelog": data.get("body", ""),
+        "publishedAt": data.get("published_at", ""),
+        "releaseUrl": data.get("html_url", ""),
+        "fpkUrl": fpk_asset.get("browser_download_url", "") if fpk_asset else "",
+        "fpkSize": fpk_asset.get("size", 0) if fpk_asset else 0
+    }
+
+def _get_current_version():
+    try:
+        with open(CONFIG_PATH.replace("settings.json", "../manifest"), 'r') as f:
+            for line in f:
+                if line.strip().startswith("version"):
+                    return line.split("=", 1)[1].strip()
+    except Exception:
+        pass
+    v = os.environ.get("TRIM_APPVER", "")
+    return v if v else "0.0.0"
+
+def _perform_update(fpk_url):
+    import urllib.request
+    global _update_status
+    try:
+        _update_status["message"] = "正在下载更新包..."
+        _update_status["progress"] = 10
+        update_dir = os.path.join(os.environ.get("TRIM_APPDEST_VOL", "/vol1"), "@appshare", "transmission", "update")
+        os.makedirs(update_dir, exist_ok=True)
+        fpk_path = os.path.join(update_dir, "transmission.fpk")
+        download_url = UPDATE_PROXY + fpk_url
+        urllib.request.urlretrieve(download_url, fpk_path)
+        if os.path.getsize(fpk_path) == 0:
+            raise Exception("下载文件为空")
+        _update_status["message"] = "正在解压更新包..."
+        _update_status["progress"] = 60
+        subprocess.run(["tar", "-xf", fpk_path, "-C", update_dir], check=True, timeout=120)
+        os.unlink(fpk_path)
+        _update_status["message"] = "正在安装更新..."
+        _update_status["progress"] = 80
+        vol_match = re.search(r'/vol(\d+)/', update_dir)
+        vol_num = vol_match.group(1) if vol_match else "1"
+        subprocess.run(["appcenter-cli", "default-volume", vol_num], cwd=update_dir, timeout=60)
+        config_env = os.path.join(update_dir, "config.env")
+        with open(config_env, 'w') as f:
+            f.write(f"wizard_data_action=keep\n")
+        proc = subprocess.Popen(["appcenter-cli", "install-local", "--env", "config.env", "--volume", vol_num],
+                                cwd=update_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        proc.detach = True
+        _update_status["message"] = "更新完成，应用将重启..."
+        _update_status["progress"] = 100
+        _update_status["updating"] = False
+    except Exception as e:
+        _update_status["message"] = f"更新失败: {e}"
+        _update_status["progress"] = 0
+        _update_status["updating"] = False
+
 
 def _tunnel_sock(client_sock, backend_sock):
     try:
@@ -174,12 +259,85 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         port = get_target_port()
         return HTTPConnection(TARGET_HOST, port, timeout=30)
 
+    def _send_json(self, status, data):
+        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _handle_api(self, path):
+        if path == "/api/update/check":
+            try:
+                global _cached_version
+                now = time.time()
+                if _cached_version["data"] and _cached_version["expires"] > now:
+                    result = _cached_version["data"]
+                else:
+                    info = _fetch_latest_version()
+                    cur = _get_current_version()
+                    has_update = _compare_version(cur, info["version"]) > 0
+                    result = {
+                        "success": True,
+                        "currentVersion": cur,
+                        "latestVersion": info["version"],
+                        "hasUpdate": has_update,
+                        "changelog": info["changelog"],
+                        "publishedAt": info["publishedAt"],
+                        "releaseUrl": info["releaseUrl"],
+                        "fpkUrl": info["fpkUrl"],
+                        "message": "发现新版本" if has_update else "已是最新版本"
+                    }
+                    _cached_version = {"expires": now + 300, "data": result}
+                self._send_json(200, result)
+            except Exception as e:
+                self._send_json(500, {"success": False, "error": str(e)})
+            return True
+
+        if path == "/api/update/install":
+            if self.command != "POST":
+                self._send_json(405, {"success": False, "error": "Method not allowed"})
+                return True
+            with _update_lock:
+                if _update_status["updating"]:
+                    self._send_json(409, {"success": False, "error": "正在更新中，请稍候"})
+                    return True
+                try:
+                    info = _fetch_latest_version()
+                    if not info["fpkUrl"]:
+                        self._send_json(400, {"success": False, "error": "未找到更新包"})
+                        return True
+                    _update_status["updating"] = True
+                    _update_status["progress"] = 0
+                    _update_status["message"] = "准备更新..."
+                except Exception as e:
+                    self._send_json(500, {"success": False, "error": str(e)})
+                    return True
+            self._send_json(200, {"success": True, "message": "开始下载更新"})
+            t = threading.Thread(target=_perform_update, args=(info["fpkUrl"],))
+            t.daemon = True
+            t.start()
+            return True
+
+        if path == "/api/update/status":
+            self._send_json(200, {"success": True, **_update_status})
+            return True
+
+        return False
+
     def do_request(self):
         if self.path == PREFIX:
             self.send_response(301)
             self.send_header("Location", PREFIX + "/")
             self.end_headers()
             return
+
+        path = self._strip_prefix()
+
+        if path.startswith("/api/update/"):
+            if self._handle_api(path):
+                return
 
         upgrade = self.headers.get("Upgrade", "").lower()
         if upgrade == "websocket":

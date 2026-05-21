@@ -45,7 +45,7 @@ RPC_USERNAME="${wizard_rpc_username:-${RPC_USERNAME:-admin}}"
 RPC_PASSWORD="${wizard_rpc_password:-${RPC_PASSWORD:-password}}"
 
 # 网关模式：端口固定内部值
-WEBUI_PORT="9091"
+WEBUI_PORT="9090"
 
 # 读取现有配置或创建新配置
 if [ -f "$CONFIG_DIR" ]; then

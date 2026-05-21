@@ -149,12 +149,19 @@
           <div class="update-notification-header">
             <div class="update-notification-title">发现新版本</div>
             <div class="update-notification-actions">
-              <a href="${updateInfo.releaseUrl}" target="_blank" class="update-notification-btn update-notification-btn-primary">前往下载</a>
-              <button class="update-notification-btn update-notification-btn-secondary ignore-btn">忽略此版本</button>
+              <button class="update-notification-btn update-notification-btn-primary update-now-btn">一键更新</button>
+              <a href="${updateInfo.releaseUrl}" target="_blank" class="update-notification-btn update-notification-btn-secondary">查看详情</a>
+              <button class="update-notification-btn update-notification-btn-secondary ignore-btn">忽略</button>
             </div>
           </div>
           <div class="update-notification-version">
             当前: v${CONFIG.currentVersion} → 最新: v${updateInfo.latestVersion}
+          </div>
+          <div class="update-progress" style="display:none;margin-top:8px;">
+            <div class="update-progress-bar" style="background:#e0e0e0;border-radius:4px;height:6px;overflow:hidden;">
+              <div class="update-progress-fill" style="background:linear-gradient(135deg,#667eea,#764ba2);height:100%;width:0%;transition:width 0.3s;"></div>
+            </div>
+            <div class="update-progress-text" style="font-size:12px;color:#666;margin-top:4px;"></div>
           </div>
           ${hasChangelog ? `<div class="update-notification-changelog">${changelogHtml}${updateInfo.changelog.length > 500 ? '...' : ''}</div>` : ''}
         </div>
@@ -338,6 +345,51 @@
       setIgnoredVersion(updateInfo.latestVersion);
       log('已忽略版本 ' + updateInfo.latestVersion);
       notification.remove();
+    };
+
+    // 一键更新
+    notification.querySelector('.update-now-btn').onclick = async function() {
+      const btn = this;
+      const progressDiv = notification.querySelector('.update-progress');
+      const progressFill = notification.querySelector('.update-progress-fill');
+      const progressText = notification.querySelector('.update-progress-text');
+      btn.disabled = true;
+      btn.textContent = '更新中...';
+      progressDiv.style.display = 'block';
+      try {
+        const res = await fetch('/app/transmission/api/update/install', {method: 'POST'});
+        const data = await res.json();
+        if (!data.success) {
+          progressText.textContent = data.error || '启动更新失败';
+          btn.disabled = false;
+          btn.textContent = '一键更新';
+          return;
+        }
+      } catch (e) {
+        progressText.textContent = '请求失败';
+        btn.disabled = false;
+        btn.textContent = '一键更新';
+        return;
+      }
+      // 轮询进度
+      const poll = setInterval(async () => {
+        try {
+          const r = await fetch('/app/transmission/api/update/status');
+          const s = await r.json();
+          if (s.updating || s.progress > 0) {
+            progressFill.style.width = s.progress + '%';
+            progressText.textContent = s.message || '';
+          }
+          if (!s.updating && s.progress >= 100) {
+            clearInterval(poll);
+            progressText.textContent = '更新完成，应用将重启...';
+          } else if (!s.updating && s.progress === 0 && s.message && s.message.includes('失败')) {
+            clearInterval(poll);
+            btn.disabled = false;
+            btn.textContent = '一键更新';
+          }
+        } catch (e) {}
+      }, 2000);
     };
 
     document.body.appendChild(notification);
