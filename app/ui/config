@@ -4,8 +4,10 @@
             "title": "Transmission",
             "icon": "images/icon_{0}.png",
             "type": "iframe",
-            "port": "${wizard_app_port}",
-            "url": "/transmission/web/",
+            "protocol": "",
+            "gatewaySocket": "transmission.sock",
+            "gatewayPrefix": "/app/transmission",
+            "url": "/app/transmission/transmission/web/",
             "allUsers": true
         }
     }

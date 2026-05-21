@@ -100,6 +100,20 @@ else
     fi
 fi
 
+# 网关模式：确保配置文件中 rpc-authentication-required=false 和 rpc-bind-address=127.0.0.1
+if [ -f "$CONFIG_DIR" ]; then
+    echo "适配网关模式配置..."
+    sed -i 's|"rpc-authentication-required"[[:space:]]*:[[:space:]]*[^,]*|"rpc-authentication-required": false|g' "$CONFIG_DIR"
+    if ! grep -q '"rpc-bind-address"' "$CONFIG_DIR"; then
+        RPC_PORT=$(grep -o '"rpc-port"[[:space:]]*:[[:space:]]*[0-9]*' "$CONFIG_DIR" 2>/dev/null | grep -o '[0-9]*$')
+        if [ -n "$RPC_PORT" ]; then
+            sed -i "s|\"rpc-port\"[[:space:]]*:[[:space:]]*[0-9]*|\"rpc-port\": ${RPC_PORT},\n    \"rpc-bind-address\": \"127.0.0.1\"|g" "$CONFIG_DIR"
+        fi
+    else
+        sed -i 's|"rpc-bind-address"[[:space:]]*:[[:space:]]*"[^"]*"|"rpc-bind-address": "127.0.0.1"|g' "$CONFIG_DIR"
+    fi
+fi
+
 # 启动服务
 echo ""
 echo "[完成] 启动服务..."
@@ -126,7 +140,7 @@ if [ $EXIT_CODE -eq 0 ]; then
     echo "Transmission 升级成功完成！"
     echo "=================================="
     echo ""
-    echo "WebUI: http://<NAS_IP>:9090/transmission/"
+    echo "网关模式: /app/transmission -> 127.0.0.1"
     exit 0
 else
     echo ""

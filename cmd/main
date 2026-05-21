@@ -7,15 +7,19 @@ LIB_DIR="${TRIM_APPDEST}/lib"
 DATA_DIR="${TRIM_PKGVAR}"
 CONFIG_DIR="${DATA_DIR}/settings.json"
 PID_FILE="${TRIM_PKGTMP}/${APP_NAME}.pid"
+PROXY_PID_FILE="${TRIM_PKGTMP}/${APP_NAME}-proxy.pid"
 LOG_FILE="${TRIM_PKGVAR}/${APP_NAME}.log"
 UI_DIR="${TRIM_APPDEST}/ui"
+
+PROXY_SCRIPT="${BIN_DIR}/gateway-proxy.py"
+GATEWAY_SOCK="${TRIM_APPDEST}/transmission.sock"
 
 # 设置库路径和 WebUI 路径
 export LD_LIBRARY_PATH="${LIB_DIR}:${LD_LIBRARY_PATH}"
 export TRANSMISSION_WEB_HOME="${UI_DIR}"
 
 # 端口配置：优先使用向导变量，其次使用系统变量，最后使用默认值
-WEBUI_PORT="${wizard_app_port:-${TRIM_SERVICE_PORT:-9090}}"
+WEBUI_PORT="${wizard_app_port:-${TRIM_SERVICE_PORT:-9091}}"
 
 # 检查环境变量
 if [ -z "$TRIM_APPDEST" ]; then
@@ -33,6 +37,66 @@ error_exit() {
     local exit_code="${2:-1}"
     echo "$message" > "$TRIM_TEMP_LOGFILE"
     exit $exit_code
+}
+
+read_transmission_port() {
+    if [ -f "$CONFIG_DIR" ]; then
+        PORT_FROM_CONFIG=$(python3 -c "import json; c=json.load(open('$CONFIG_DIR')); print(c.get('rpc-port',0))" 2>/dev/null)
+        if [ -n "$PORT_FROM_CONFIG" ] && [ "$PORT_FROM_CONFIG" -gt 0 ] 2>/dev/null; then
+            WEBUI_PORT="$PORT_FROM_CONFIG"
+        fi
+    fi
+}
+
+start_proxy() {
+    if [ -f "$PROXY_PID_FILE" ]; then
+        local PROXY_PID=$(cat "$PROXY_PID_FILE")
+        if kill -0 "$PROXY_PID" 2>/dev/null; then
+            echo "proxy is already running (PID: $PROXY_PID)"
+            return 0
+        fi
+        rm -f "$PROXY_PID_FILE"
+    fi
+
+    rm -f "$GATEWAY_SOCK"
+    read_transmission_port
+
+    if [ ! -f "$PROXY_SCRIPT" ]; then
+        echo "Warning: proxy script not found at $PROXY_SCRIPT, gateway proxy unavailable"
+        return 1
+    fi
+
+    python3 "$PROXY_SCRIPT" "$GATEWAY_SOCK" 127.0.0.1 "$WEBUI_PORT" "$CONFIG_DIR" >> "$LOG_FILE" 2>&1 &
+
+    PROXY_PID=$!
+    echo $PROXY_PID > "$PROXY_PID_FILE"
+    sleep 1
+
+    if kill -0 "$PROXY_PID" 2>/dev/null && [ -S "$GATEWAY_SOCK" ]; then
+        echo "proxy started (PID: $PROXY_PID), gateway: ${GATEWAY_SOCK} -> 127.0.0.1:${WEBUI_PORT}"
+        return 0
+    fi
+
+    echo "Warning: proxy failed to start, gateway proxy unavailable"
+    rm -f "$PROXY_PID_FILE"
+    rm -f "$GATEWAY_SOCK"
+    return 1
+}
+
+stop_proxy() {
+    if [ -f "$PROXY_PID_FILE" ]; then
+        local PROXY_PID=$(cat "$PROXY_PID_FILE" 2>/dev/null)
+        if kill -0 "$PROXY_PID" 2>/dev/null; then
+            kill "$PROXY_PID" 2>/dev/null || true
+            sleep 1
+            if kill -0 "$PROXY_PID" 2>/dev/null; then
+                kill -9 "$PROXY_PID" 2>/dev/null || true
+            fi
+        fi
+        rm -f "$PROXY_PID_FILE"
+    fi
+    rm -f "$GATEWAY_SOCK"
+    echo "proxy stopped"
 }
 
 start() {
@@ -81,7 +145,8 @@ start() {
     "peer-port": 51413,
     "peer-port-random-on-start": true,
     "rpc-enabled": true,
-    "rpc-authentication-required": true,
+    "rpc-authentication-required": false,
+    "rpc-bind-address": "127.0.0.1",
     "rpc-port": ${WEBUI_PORT},
     "rpc-url": "/transmission/",
     "rpc-host-whitelist-enabled": false,
@@ -132,7 +197,7 @@ EOF
         PID=$(cat "$PID_FILE")
         if ps -p "$PID" > /dev/null 2>&1; then
             echo "${APP_NAME} 启动成功 (PID: $PID)"
-            echo "WebUI: http://<NAS_IP>:${WEBUI_PORT}/transmission/"
+            start_proxy
             return 0
         fi
     fi
@@ -140,6 +205,8 @@ EOF
 }
 
 stop() {
+    stop_proxy
+
     # 查找进程
     PID=""
     if [ -f "$PID_FILE" ]; then

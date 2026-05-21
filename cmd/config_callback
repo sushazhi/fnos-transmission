@@ -45,7 +45,7 @@ RPC_USERNAME="${wizard_rpc_username:-${RPC_USERNAME:-admin}}"
 RPC_PASSWORD="${wizard_rpc_password:-${RPC_PASSWORD:-password}}"
 
 # 端口配置：优先使用向导变量，其次使用系统变量，最后使用默认值
-WEBUI_PORT="${wizard_app_port:-${TRIM_SERVICE_PORT:-9090}}"
+WEBUI_PORT="${wizard_app_port:-${TRIM_SERVICE_PORT:-9091}}"
 echo "端口: ${WEBUI_PORT}"
 
 # 读取现有配置或创建新配置
@@ -56,6 +56,14 @@ if [ -f "$CONFIG_DIR" ]; then
     sed -i "s|\"rpc-port\"[[:space:]]*:[[:space:]]*[0-9]*|\"rpc-port\": ${WEBUI_PORT}|g" "$CONFIG_DIR"
     sed -i "s|\"rpc-username\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"rpc-username\": \"${RPC_USERNAME}\"|g" "$CONFIG_DIR"
     sed -i "s|\"rpc-password\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"rpc-password\": \"${RPC_PASSWORD}\"|g" "$CONFIG_DIR"
+    
+    # 网关模式：禁用RPC认证、绑定127.0.0.1
+    sed -i 's|"rpc-authentication-required"[[:space:]]*:[[:space:]]*[^,]*|"rpc-authentication-required": false|g' "$CONFIG_DIR"
+    if ! grep -q '"rpc-bind-address"' "$CONFIG_DIR"; then
+        sed -i "s|\"rpc-port\"[[:space:]]*:[[:space:]]*[0-9]*|\"rpc-port\": ${WEBUI_PORT},\n    \"rpc-bind-address\": \"127.0.0.1\"|g" "$CONFIG_DIR"
+    else
+        sed -i 's|"rpc-bind-address"[[:space:]]*:[[:space:]]*"[^"]*"|"rpc-bind-address": "127.0.0.1"|g' "$CONFIG_DIR"
+    fi
     
     echo "配置更新完成，已保留用户的其他设置"
 else
@@ -75,7 +83,8 @@ else
     "peer-port": 51413,
     "peer-port-random-on-start": true,
     "rpc-enabled": true,
-    "rpc-authentication-required": true,
+    "rpc-authentication-required": false,
+    "rpc-bind-address": "127.0.0.1",
     "rpc-port": ${WEBUI_PORT},
     "rpc-url": "/transmission/",
     "rpc-host-whitelist-enabled": false,
@@ -96,7 +105,7 @@ echo ""
 echo "用户名: ${RPC_USERNAME}"
 echo "端口: ${WEBUI_PORT}"
 echo ""
-echo "WebUI: http://<NAS_IP>:${WEBUI_PORT}/transmission/"
+echo "网关模式: /app/transmission -> 127.0.0.1:${WEBUI_PORT}"
 echo ""
 
 # 根据之前的状态决定是否启动服务

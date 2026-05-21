@@ -36,6 +36,7 @@ echo "[1/3] 停止 ${APP_NAME} 服务..."
 STOPPED=false
 if [ -x "${TRIM_APPDEST}/cmd/main" ]; then
     "${TRIM_APPDEST}/cmd/main" stop && STOPPED=true || echo "停止命令执行失败或服务已停止"
+    rm -f "${TRIM_APPDEST}/transmission.sock" 2>/dev/null || true
 elif [ -f "$PID_FILE" ]; then
     PID=$(cat "$PID_FILE")
     if ps -p "$PID" > /dev/null 2>&1; then
