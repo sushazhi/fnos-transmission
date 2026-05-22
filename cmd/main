@@ -70,12 +70,15 @@ start_proxy() {
 
     PROXY_PID=$!
     echo $PROXY_PID > "$PROXY_PID_FILE"
-    sleep 1
 
-    if kill -0 "$PROXY_PID" 2>/dev/null && [ -S "$GATEWAY_SOCK" ]; then
-        echo "proxy started (PID: $PROXY_PID), gateway: ${GATEWAY_SOCK} -> 127.0.0.1:${WEBUI_PORT}"
-        return 0
-    fi
+    # 轮询等待 Unix socket 创建（最大3秒）
+    for i in $(seq 1 15); do
+        if kill -0 "$PROXY_PID" 2>/dev/null && [ -S "$GATEWAY_SOCK" ]; then
+            echo "proxy started (PID: $PROXY_PID), gateway: ${GATEWAY_SOCK} -> 127.0.0.1:${WEBUI_PORT}"
+            return 0
+        fi
+        sleep 0.2
+    done
 
     echo "Warning: proxy failed to start, gateway proxy unavailable"
     rm -f "$PROXY_PID_FILE"
@@ -195,16 +198,18 @@ EOF
         --foreground \
         >> "${LOG_FILE}" 2>&1 &
 
-    # 等待PID文件创建
-    sleep 2
-    if [ -f "$PID_FILE" ]; then
-        PID=$(cat "$PID_FILE")
-        if ps -p "$PID" > /dev/null 2>&1; then
-            echo "${APP_NAME} 启动成功 (PID: $PID)"
-            start_proxy
-            return 0
+    # 轮询等待PID文件创建（最大5秒）
+    for i in $(seq 1 25); do
+        if [ -f "$PID_FILE" ]; then
+            PID=$(cat "$PID_FILE")
+            if ps -p "$PID" > /dev/null 2>&1; then
+                echo "${APP_NAME} 启动成功 (PID: $PID)"
+                start_proxy
+                return 0
+            fi
         fi
-    fi
+        sleep 0.2
+    done
     error_exit "错误：${APP_NAME} 启动失败"
 }
 
