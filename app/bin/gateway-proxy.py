@@ -184,48 +184,141 @@ def _get_current_version():
     v = os.environ.get("TRIM_APPVER", "")
     return v if v else "0.0.0"
 
-def _perform_update(fpk_url):
-    import urllib.request
-    global _update_status
+def _validate_fpk(path):
+    """检查文件是否为有效 fpk 而非 HTML 错误页"""
     try:
-        _update_status["message"] = "正在下载更新包..."
-        _update_status["progress"] = 10
-        update_dir = os.path.join(os.environ.get("TRIM_APPDEST_VOL", "/vol1"), "@appshare", "transmission", "update")
-        os.makedirs(update_dir, exist_ok=True)
-        fpk_path = os.path.join(update_dir, "transmission.fpk")
-        download_url = UPDATE_PROXY + fpk_url
-        req = urllib.request.Request(download_url)
-        resp = urllib.request.urlopen(req, timeout=120)
-        total = int(resp.headers.get("Content-Length", 0))
-        downloaded = 0
-        with open(fpk_path, 'wb') as f:
+        with open(path, 'rb') as f:
+            head = f.read(4)
+            if head[:2] == b'\x1f\x8b' or head == b'PK\x03\x04':
+                return True, ""
+            return False, f"内容异常 ({repr(head)})"
+    except Exception as e:
+        return False, str(e)
+
+def _download_fpk(url, dest, status, max_size=5*1024*1024):
+    """
+    下载 fpk 文件到 dest。
+    参考 fnos-logmanager downloadFileWithProgress 模式。
+    返回 (成功, 错误信息)
+    """
+    import urllib.request, urllib.error
+    tmp = dest + ".part"
+    # 清理残留
+    if os.path.exists(tmp):
+        os.remove(tmp)
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        resp = urllib.request.urlopen(req, timeout=30)
+    except urllib.error.HTTPError as e:
+        return False, f"HTTP {e.code} {e.reason}"
+    except urllib.error.URLError as e:
+        return False, f"网络错误: {e.reason}"
+    except Exception as e:
+        return False, f"连接失败: {e}"
+
+    # 检查状态码
+    if resp.status != 200:
+        resp.close()
+        return False, f"服务器返回 HTTP {resp.status}"
+
+    # 检查 Content-Length
+    total = int(resp.headers.get("Content-Length", 0))
+    if total > max_size:
+        resp.close()
+        return False, f"文件过大 ({total//1024}KB > {max_size//1024}KB)"
+
+    # 设置 socket 读超时
+    try:
+        resp.fp.raw._sock.settimeout(30)
+    except Exception:
+        pass
+
+    downloaded = 0
+    try:
+        with open(tmp, 'wb') as f:
             while True:
                 chunk = resp.read(65536)
                 if not chunk:
                     break
                 f.write(chunk)
                 downloaded += len(chunk)
+                if downloaded > max_size:
+                    resp.close()
+                    os.remove(tmp)
+                    return False, "下载内容超过大小限制"
                 if total > 0:
                     pct = 10 + int(downloaded / total * 50)
-                    _update_status["progress"] = pct
-                    _update_status["message"] = f"正在下载... {downloaded//1024}KB/{total//1024}KB"
+                    status["progress"] = pct
+                    status["message"] = f"正在下载... {downloaded//1024}KB/{total//1024}KB"
+    except Exception as e:
         resp.close()
-        if not os.path.exists(fpk_path) or os.path.getsize(fpk_path) < 1024:
-            raise Exception("下载文件无效")
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        return False, f"下载中断: {e}"
+    resp.close()
+
+    if downloaded == 0:
+        os.remove(tmp)
+        return False, "下载文件为空"
+
+    os.replace(tmp, dest)
+    return True, ""
+
+def _perform_update(fpk_url):
+    global _update_status
+    try:
+        _update_status["message"] = "正在准备更新..."
+        _update_status["progress"] = 5
+
+        # 下载到 /tmp/ 目录（应用中心文件选择器可访问）
+        update_dir = "/tmp"
+        fpk_path = os.path.join(update_dir, "transmission-update.fpk")
+
+        # 先用代理下载，失败后直连
+        urls = [UPDATE_PROXY + fpk_url, fpk_url]
+        success = False
+        last_error = ""
+
+        for idx, download_url in enumerate(urls):
+            _update_status["message"] = "正在下载更新包..." if idx == 0 else "代理下载失败，尝试直连..."
+            _update_status["progress"] = 10 if idx == 0 else 10
+
+            ok, err = _download_fpk(download_url, fpk_path, _update_status)
+            if ok:
+                # 校验文件内容
+                valid, reason = _validate_fpk(fpk_path)
+                if valid:
+                    success = True
+                    break
+                else:
+                    last_error = f"文件校验失败: {reason}"
+                    os.remove(fpk_path)
+            else:
+                last_error = err
+
+        if not success:
+            raise Exception(last_error or "下载失败")
+
         _update_status["message"] = "正在安装更新..."
         _update_status["progress"] = 70
         vol_match = re.search(r'/vol(\d+)/', update_dir)
         vol_num = vol_match.group(1) if vol_match else "1"
-        subprocess.run(["appcenter-cli", "default-volume", vol_num], cwd=update_dir, timeout=60)
         config_env = os.path.join(update_dir, "config.env")
         with open(config_env, 'w') as f:
             f.write(f"wizard_data_action=keep\n")
-        proc = subprocess.Popen(["appcenter-cli", "install-local", fpk_path, "--env", "config.env", "--volume", vol_num],
-                                cwd=update_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        proc.detach = True
-        _update_status["message"] = "更新完成，应用将重启..."
+
+        # 验证 fpk 文件
+        if not os.path.exists(fpk_path):
+            raise Exception(f"更新包文件不存在: {fpk_path}")
+        fpk_size = os.path.getsize(fpk_path)
+        sys.stderr.write(f"[update] fpk 已下载: {fpk_path} ({fpk_size} bytes)\n")
+
+        # fnOS 安全限制：应用沙箱内无权限调用 appcenter-cli 自动安装
+        # 提供 HTTP 下载链接，用户下载后手动上传应用中心安装
+        _update_status["message"] = "下载完成！请点击下方按钮下载 fpk，然后前往 应用中心 → 手动安装 上传"
         _update_status["progress"] = 100
         _update_status["updating"] = False
+        _update_status["downloadUrl"] = PREFIX + "/api/update/download"
     except Exception as e:
         _update_status["message"] = f"更新失败: {e}"
         _update_status["progress"] = 0
@@ -333,6 +426,28 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
 
         if path == "/api/update/status":
             self._send_json(200, {"success": True, **_update_status})
+            return True
+
+        if path == "/api/update/download":
+            fpk_path = "/tmp/transmission-update.fpk"
+            if not os.path.exists(fpk_path):
+                self._send_json(404, {"success": False, "error": "更新包不存在，请先点击一键更新"})
+                return True
+            try:
+                sz = os.path.getsize(fpk_path)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Disposition", "attachment; filename=transmission-update.fpk")
+                self.send_header("Content-Length", str(sz))
+                self.end_headers()
+                with open(fpk_path, 'rb') as f:
+                    while True:
+                        chunk = f.read(65536)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+            except Exception as e:
+                self._send_json(500, {"success": False, "error": str(e)})
             return True
 
         return False

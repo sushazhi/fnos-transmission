@@ -391,9 +391,20 @@
           }
           if (!s.updating && s.progress >= 100) {
             clearInterval(poll);
-            progressText.textContent = '更新完成，应用将重启...';
+            progressText.textContent = s.message || '更新完成';
+            if (s.downloadUrl) {
+              var dl = document.createElement('a');
+              dl.href = s.downloadUrl;
+              dl.download = 'transmission-update.fpk';
+              dl.className = 'update-notification-btn update-notification-btn-primary';
+              dl.style.marginTop = '10px';
+              dl.style.display = 'inline-block';
+              dl.textContent = '📥 下载 fpk 更新包';
+              progressText.parentNode.appendChild(dl);
+            }
           } else if (!s.updating && s.progress === 0 && s.message && s.message.includes('失败')) {
             clearInterval(poll);
+            progressText.textContent = s.message;
             btn.disabled = false;
             btn.textContent = '一键更新';
           }
