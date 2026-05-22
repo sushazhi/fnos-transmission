@@ -434,10 +434,12 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 self._send_json(404, {"success": False, "error": "更新包不存在，请先点击一键更新"})
                 return True
             try:
+                ver = _get_current_version()
+                filename = f"transmission-{ver}-arm64.fpk"
                 sz = os.path.getsize(fpk_path)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/octet-stream")
-                self.send_header("Content-Disposition", "attachment; filename=transmission-update.fpk")
+                self.send_header("Content-Disposition", f"attachment; filename={filename}")
                 self.send_header("Content-Length", str(sz))
                 self.end_headers()
                 with open(fpk_path, 'rb') as f:

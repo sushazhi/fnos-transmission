@@ -115,7 +115,7 @@ if ((Test-Path $daemonCache)) {
     Copy-Item $daemonCache $daemonTarget -Force
 } else {
     Write-Host "  Downloading from release v$targetVersion..." -ForegroundColor Yellow
-    $daemonUrl = "$GITHUB_RELEASES_URL/v$targetVersion/transmission-daemon"
+    $daemonUrl = "$GITHUB_RELEASES_URL/v$targetVersion/transmission-daemon-$targetVersion"
     try {
         Invoke-WebRequest -Uri $daemonUrl -OutFile $daemonCache -UseBasicParsing
         Copy-Item $daemonCache $daemonTarget -Force
@@ -136,7 +136,7 @@ if ((Test-Path $libCache)) {
     Copy-Item $libCache $libTarget -Force
 } else {
     Write-Host "  Downloading from release v$targetVersion..." -ForegroundColor Yellow
-    $libUrl = "$GITHUB_RELEASES_URL/v$targetVersion/libminiupnpc.so.17"
+    $libUrl = "$GITHUB_RELEASES_URL/v$targetVersion/libminiupnpc.so.17-$targetVersion"
     try {
         Invoke-WebRequest -Uri $libUrl -OutFile $libCache -UseBasicParsing
         Copy-Item $libCache $libTarget -Force
