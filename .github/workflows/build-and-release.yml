@@ -420,16 +420,16 @@ jobs:
           CHANGELOG="$CHANGELOG_RAW"
 
           echo "Publishing release..."
-          if [ "${{ env.IS_RELEASE_VERSION }}" = "true" ]; then
+          if [ "${{ steps.check_builds.outputs.use_prebuilt }}" = "true" ]; then
             gh release create "${{ github.ref_name }}" \
               "transmission-${APP_VERSION}-arm64.fpk" \
-              "app/bin/transmission-daemon#transmission-daemon-${TRANSMISSION_VERSION}" \
-              "app/lib/libminiupnpc.so.17#libminiupnpc.so.17-${TRANSMISSION_VERSION}" \
               --title "${{ github.ref_name }}" \
               --notes "$CHANGELOG"
           else
             gh release create "${{ github.ref_name }}" \
               "transmission-${APP_VERSION}-arm64.fpk" \
+              "app/bin/transmission-daemon#transmission-daemon-${TRANSMISSION_VERSION}" \
+              "app/lib/libminiupnpc.so.17#libminiupnpc.so.17-${TRANSMISSION_VERSION}" \
               --title "${{ github.ref_name }}" \
               --notes "$CHANGELOG"
           fi
