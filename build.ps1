@@ -121,9 +121,16 @@ if ((Test-Path $daemonCache)) {
         Copy-Item $daemonCache $daemonTarget -Force
         Write-Host "  Downloaded" -ForegroundColor Green
     } catch {
-        Write-Host "  ERROR: Failed to download transmission-daemon from release v$targetVersion" -ForegroundColor Red
-        Write-Host "  Make sure release v$targetVersion exists with transmission-daemon" -ForegroundColor Yellow
-        exit 1
+        $daemonUrl2 = "$GITHUB_RELEASES_URL/v$targetVersion/transmission-daemon"
+        try {
+            Invoke-WebRequest -Uri $daemonUrl2 -OutFile $daemonCache -UseBasicParsing
+            Copy-Item $daemonCache $daemonTarget -Force
+            Write-Host "  Downloaded" -ForegroundColor Green
+        } catch {
+            Write-Host "  ERROR: Failed to download transmission-daemon from release v$targetVersion" -ForegroundColor Red
+            Write-Host "  Make sure release v$targetVersion exists with transmission-daemon" -ForegroundColor Yellow
+            exit 1
+        }
     }
 }
 
@@ -142,7 +149,14 @@ if ((Test-Path $libCache)) {
         Copy-Item $libCache $libTarget -Force
         Write-Host "  Downloaded" -ForegroundColor Green
     } catch {
-        Write-Host "  Warning: libminiupnpc.so.17 not available in release v$targetVersion" -ForegroundColor Yellow
+        $libUrl2 = "$GITHUB_RELEASES_URL/v$targetVersion/libminiupnpc.so.17"
+        try {
+            Invoke-WebRequest -Uri $libUrl2 -OutFile $libCache -UseBasicParsing
+            Copy-Item $libCache $libTarget -Force
+            Write-Host "  Downloaded" -ForegroundColor Green
+        } catch {
+            Write-Host "  Warning: libminiupnpc.so.17 not available in release v$targetVersion" -ForegroundColor Yellow
+        }
     }
 }
 
