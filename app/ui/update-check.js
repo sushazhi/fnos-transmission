@@ -419,14 +419,19 @@
   async function checkUpdate() {
     log('开始检查更新... 当前版本: ' + CONFIG.currentVersion);
 
-    // 先检查缓存，有效期内直接使用缓存结果
-    const cached = getCachedResult();
-    if (cached && cached.hasUpdate !== undefined) {
-      log('使用缓存结果: hasUpdate=' + cached.hasUpdate + ', latest=' + cached.latestVersion);
-      if (cached.hasUpdate) {
-        showUpdateNotification(cached);
+    // debug 模式：跳过缓存，强制刷新
+    if (isDebug) {
+      log('debug模式：跳过缓存，强制检查最新版本');
+    } else {
+      // 先检查缓存，有效期内直接使用缓存结果
+      const cached = getCachedResult();
+      if (cached && cached.hasUpdate !== undefined) {
+        log('使用缓存结果: hasUpdate=' + cached.hasUpdate + ', latest=' + cached.latestVersion);
+        if (cached.hasUpdate) {
+          showUpdateNotification(cached);
+        }
+        return;
       }
-      return;
     }
 
     // 缓存过期或不存在，重新检查 GitHub

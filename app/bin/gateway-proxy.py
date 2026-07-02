@@ -138,6 +138,7 @@ if os.path.exists(SOCK_PATH):
 UPDATE_REPO = "sushazhi/fnos-transmission"
 UPDATE_API = "https://api.github.com"
 UPDATE_PROXY = "https://ghfast.top/"
+UPDATE_PROXIES = ["https://ghfast.top/", "https://gh-proxy.com/"]
 _update_status = {"updating": False, "progress": 0, "message": ""}
 _update_lock = threading.Lock()
 _cached_version = {"expires": 0, "data": None}
@@ -264,6 +265,40 @@ def _download_fpk(url, dest, status, max_size=5*1024*1024):
     os.replace(tmp, dest)
     return True, ""
 
+def _verify_fpk_version(fpk_path, expected_version):
+    """验证 fpk 内部的 manifest 版本号是否匹配"""
+    try:
+        import gzip
+        with gzip.open(fpk_path, 'rb') as f:
+            data = f.read()
+        text = data.decode('utf-8', errors='replace')
+        for line in text.split('\n'):
+            line = line.strip()
+            if line.startswith('version'):
+                ver = line.split('=')[1].strip()
+                if ver == expected_version:
+                    return True, ""
+                return False, f"版本不匹配: 期望 {expected_version}, 实际 {ver}"
+    except Exception:
+        pass
+    # 尝试 zip 格式
+    try:
+        import zipfile
+        with zipfile.ZipFile(fpk_path, 'r') as zf:
+            for name in zf.namelist():
+                if 'manifest' in name or name == 'manifest':
+                    content = zf.read(name).decode('utf-8', errors='replace')
+                    for line in content.split('\n'):
+                        line = line.strip()
+                        if line.startswith('version'):
+                            ver = line.split('=')[1].strip()
+                            if ver == expected_version:
+                                return True, ""
+                            return False, f"版本不匹配: 期望 {expected_version}, 实际 {ver}"
+    except Exception:
+        pass
+    return True, ""  # 无法验证则放行（兼容未知格式）
+
 def _perform_update(fpk_url):
     global _update_status
     try:
@@ -274,8 +309,8 @@ def _perform_update(fpk_url):
         update_dir = "/tmp"
         fpk_path = os.path.join(update_dir, "transmission-update.fpk")
 
-        # 先用代理下载，失败后直连
-        urls = [UPDATE_PROXY + fpk_url, fpk_url]
+        # 多级代理优先，全部失败后直连
+        urls = [p + fpk_url for p in UPDATE_PROXIES] + [fpk_url]
         success = False
         last_error = ""
 
@@ -285,14 +320,29 @@ def _perform_update(fpk_url):
 
             ok, err = _download_fpk(download_url, fpk_path, _update_status)
             if ok:
-                # 校验文件内容
+                # 校验文件头（gzip/zip 魔数）
                 valid, reason = _validate_fpk(fpk_path)
-                if valid:
-                    success = True
-                    break
-                else:
+                if not valid:
                     last_error = f"文件校验失败: {reason}"
                     os.remove(fpk_path)
+                    continue
+                # 校验文件大小是否匹配 GitHub release
+                expected_size = _update_status.get("fpkSize", 0)
+                actual_size = os.path.getsize(fpk_path)
+                if expected_size and actual_size != expected_size:
+                    last_error = f"文件大小不匹配: 期望 {expected_size}, 实际 {actual_size}"
+                    os.remove(fpk_path)
+                    continue
+                # 校验 manifest 版本号
+                expected_ver = _update_status.get("version", "")
+                if expected_ver:
+                    match, reason = _verify_fpk_version(fpk_path, expected_ver)
+                    if not match:
+                        last_error = reason
+                        os.remove(fpk_path)
+                        continue
+                success = True
+                break
             else:
                 last_error = err
 
@@ -372,11 +422,25 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _handle_api(self, path):
+        # 解析查询参数（debug=1 用于调试模式强制刷新缓存）
+        qs = ""
+        if "?" in path:
+            path, qs = path.split("?", 1)
+        params = {}
+        if qs:
+            for p in qs.split("&"):
+                if "=" in p:
+                    k, v = p.split("=", 1)
+                    params[k] = v
+                else:
+                    params[p] = ""
+        is_debug = params.get("debug") == "1"
+
         if path == "/api/update/check":
             try:
                 global _cached_version
                 now = time.time()
-                if _cached_version["data"] and _cached_version["expires"] > now:
+                if not is_debug and _cached_version["data"] and _cached_version["expires"] > now:
                     result = _cached_version["data"]
                 else:
                     info = _fetch_latest_version()
@@ -415,6 +479,8 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                     _update_status["updating"] = True
                     _update_status["progress"] = 0
                     _update_status["message"] = "准备更新..."
+                    _update_status["version"] = info["version"]
+                    _update_status["fpkSize"] = info["fpkSize"]
                 except Exception as e:
                     self._send_json(500, {"success": False, "error": str(e)})
                     return True
@@ -434,7 +500,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 self._send_json(404, {"success": False, "error": "更新包不存在，请先点击一键更新"})
                 return True
             try:
-                ver = _get_current_version()
+                ver = _update_status.get("version") or _get_current_version()
                 filename = f"transmission-{ver}-arm64.fpk"
                 sz = os.path.getsize(fpk_path)
                 self.send_response(200)
