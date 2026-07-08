@@ -70,7 +70,7 @@ if ($ListVersions) {
 }
 $ARCH = "arm64"
 $BUILD_DIR = Join-Path $PROJECT_DIR ".local-build"
-$FNPACK_URL = "https://static2.fnnas.com/fnpack/fnpack-1.2.1-windows-amd64"
+$FNPACK_URL = "https://static2.fnnas.com/fnpack/fnpack-1.2.3-windows-amd64"
 $GITHUB_RELEASES_URL = "https://github.com/sushazhi/fnos-transmission/releases/download"
 $WEBUI_BASE = "https://ghfast.top/https://github.com/sushazhi/transmission-web/releases/download"
 
