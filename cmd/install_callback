@@ -45,6 +45,13 @@ chown -R package:package "$DATA_DIR" 2>/dev/null || true
 chmod 755 "$DATA_DIR" 2>/dev/null || true
 chmod 755 "$DATA_DIR/torrents" 2>/dev/null || true
 
+# 确保临时目录存在且权限正确（防止 @apptemp 权限问题）
+if [ -n "$TRIM_PKGTMP" ]; then
+    mkdir -p "$TRIM_PKGTMP" 2>/dev/null || true
+    chown -R package:package "$TRIM_PKGTMP" 2>/dev/null || true
+    chmod 777 "$TRIM_PKGTMP" 2>/dev/null || true
+fi
+
 # 检查配置文件是否已存在（用户卸载时可能保留了配置）
 if [ -f "$CONFIG_DIR" ]; then
     echo "检测到已有配置文件，保留其他设置并更新用户名、密码、下载目录..."

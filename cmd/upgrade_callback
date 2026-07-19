@@ -76,6 +76,12 @@ if [ "$BACKUP_EXISTS" = true ]; then
     chmod 755 "$DATA_DIR" 2>/dev/null || true
     find "$DATA_DIR" -type d -exec chmod 755 {} \; 2>/dev/null || true
     find "$DATA_DIR" -type f -exec chmod 644 {} \; 2>/dev/null || true
+    
+    # 确保临时目录权限正确
+    if [ -n "$TRIM_PKGTMP" ]; then
+        chown -R package:package "$TRIM_PKGTMP" 2>/dev/null || true
+        chmod 777 "$TRIM_PKGTMP" 2>/dev/null || true
+    fi
 else
     # 检查是否有真实数据
     CONFIG_EXISTS=false

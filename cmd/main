@@ -113,8 +113,20 @@ start() {
         rm -f "$PID_FILE"
     fi
 
-    # 创建必要目录
-    mkdir -p "$(dirname "$PID_FILE")"
+    # 创建必要目录（权限不足时自动修复或降级）
+    PID_DIR="$(dirname "$PID_FILE")"
+    if ! mkdir -p "$PID_DIR" 2>/dev/null; then
+        if [ -d "$PID_DIR" ]; then
+            chmod 777 "$PID_DIR" 2>/dev/null || true
+        fi
+        if [ ! -w "$PID_DIR" ] 2>/dev/null; then
+            echo "警告：$PID_DIR 不可写，降级使用 /tmp/${APP_NAME}" >> "$LOG_FILE"
+            PID_DIR="/tmp/${APP_NAME}"
+            PID_FILE="${PID_DIR}/${APP_NAME}.pid"
+            PROXY_PID_FILE="${PID_DIR}/${APP_NAME}-proxy.pid"
+            mkdir -p "$PID_DIR" 2>/dev/null || true
+        fi
+    fi
     mkdir -p "$DATA_DIR"
     mkdir -p "${DATA_DIR}/torrents"
     mkdir -p "${DATA_DIR}/resume"
