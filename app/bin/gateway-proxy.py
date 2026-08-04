@@ -149,8 +149,8 @@ if os.path.exists(SOCK_PATH):
 
 UPDATE_REPO = "sushazhi/fnos-transmission"
 UPDATE_API = "https://api.github.com"
-UPDATE_PROXY = "https://ghfast.top/"
-UPDATE_PROXIES = ["https://ghfast.top/", "https://v4.gh-proxy.org/"]
+UPDATE_PROXY = "https://gh-proxy.com/"
+UPDATE_PROXIES = ["https://gh-proxy.com/", "https://v4.gh-proxy.org/", "https://ghfast.top/"]
 _update_status = {"updating": False, "progress": 0, "message": ""}
 _update_lock = threading.Lock()
 _cached_version = {"expires": 0, "data": None}
