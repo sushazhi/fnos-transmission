@@ -19,6 +19,7 @@
 
   const CONFIG = {
     currentVersion: window.TRANSMISSION_APP_VERSION || '4.1.0',
+    currentArch: window.TRANSMISSION_APP_ARCH || 'unknown',
     repoOwner: 'sushazhi',
     repoName: 'fnos-transmission',
     checkInterval: 24 * 60 * 60 * 1000
@@ -131,6 +132,18 @@
     return 0;  // 相等
   }
 
+  // 从 release 资产中查找匹配当前架构的 fpk
+  function findMatchingAsset(assets, arch) {
+    if (!assets || !assets.length) return null;
+    const archSuffix = '-' + arch + '.fpk';
+    for (let i = 0; i < assets.length; i++) {
+      if (assets[i].name && assets[i].name.indexOf(archSuffix) !== -1) {
+        return assets[i];
+      }
+    }
+    return null;
+  }
+
   function showUpdateNotification(updateInfo) {
     // 检查是否已忽略此版本
     if (getIgnoredVersion() === updateInfo.latestVersion) {
@@ -164,7 +177,7 @@
             </div>
           </div>
           <div class="update-notification-version">
-            当前: v${CONFIG.currentVersion} → 最新: v${updateInfo.latestVersion}
+            当前: v${CONFIG.currentVersion} → 最新: v${updateInfo.latestVersion} (${CONFIG.currentArch})
           </div>
           <div class="update-progress" style="display:none;margin-top:8px;">
             <div class="update-progress-bar" style="background:#e0e0e0;border-radius:4px;height:6px;overflow:hidden;">
@@ -448,12 +461,16 @@
       let latestVersion = (data.tag_name || '').replace(/^v/, '').trim();
 
       log('GitHub 最新版本: ' + latestVersion);
-      log('当前版本: ' + CONFIG.currentVersion);
+      log('当前版本: ' + CONFIG.currentVersion + ', 架构: ' + CONFIG.currentArch);
 
       const cmp = compareVersions(CONFIG.currentVersion, latestVersion);
       log('比较结果: ' + cmp + ' (正数=有更新, 0=相同, 负数=当前更新)');
 
-      const hasUpdate = cmp > 0;
+      // 需要当前架构的 fpk 包才提示更新
+      const hasUpdate = cmp > 0 && !!findMatchingAsset(data.assets, CONFIG.currentArch);
+      if (cmp > 0 && !hasUpdate) {
+        log('新版本无当前架构(' + CONFIG.currentArch + ')的更新包，跳过通知');
+      }
 
       const result = {
         hasUpdate,
@@ -470,7 +487,7 @@
         log('发现新版本，显示通知');
         showUpdateNotification(result);
       } else {
-        log('当前是最新版本');
+        log('当前是最新版本（或无当前架构更新包）');
       }
     } catch (error) {
       log('检查失败: ' + error.message);

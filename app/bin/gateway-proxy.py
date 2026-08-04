@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import http.server, socket, sys, os, signal, re, time, threading, gzip, zlib, select, json, subprocess
+import platform as _platform
 from http.client import HTTPConnection
 from urllib.parse import urlparse, urlunparse
 
@@ -9,6 +10,13 @@ INITIAL_PORT = int(sys.argv[3])
 CONFIG_PATH = sys.argv[4] if len(sys.argv) > 4 else None
 PREFIX = "/app/transmission"
 
+# 架构检测（模块级）
+_RAW_ARCH = _platform.machine().lower()
+if _RAW_ARCH in ('aarch64', 'arm64', 'armv8l'):
+    CURRENT_ARCH = 'arm64'
+else:
+    CURRENT_ARCH = 'amd64'
+
 _current_port = INITIAL_PORT
 _port_check_time = 0
 _port_lock = threading.Lock()
@@ -17,6 +25,7 @@ INJECT_SCRIPT = b'''<script>
 (function(){
 var P="/app/transmission";
 try{var k=Object.keys(localStorage);for(var i=0;i<k.length;i++){var v=localStorage.getItem(k[i]);if(v&&v.includes&&(v.includes(':9090')||v.includes(':9091'))){localStorage.removeItem(k[i]);}}}catch(e){}
+window.TRANSMISSION_APP_ARCH = "__ARCH__";
 var _f=window.fetch;
 window.fetch=function(u,o){
 if(typeof u==='string'){
@@ -69,6 +78,9 @@ window.WebSocket.CLOSED=_cw.CLOSED;
 }
 })();
 </script>'''
+
+# 注入当前架构到前端
+INJECT_SCRIPT = INJECT_SCRIPT.replace(b"__ARCH__", CURRENT_ARCH.encode("ascii"))
 
 def decompress(data, encoding):
     try:
@@ -160,18 +172,29 @@ def _fetch_latest_version():
     with urllib.request.urlopen(req, timeout=15) as resp:
         data = json.loads(resp.read())
     version = data.get("tag_name", "").lstrip("v")
+    arch = CURRENT_ARCH
     fpk_asset = None
+    fpk_suffix = f"-{arch}.fpk"
     for a in data.get("assets", []):
-        if a.get("name", "").endswith(".fpk") and "transmission" in a.get("name", ""):
+        name = a.get("name", "")
+        if name.endswith(fpk_suffix) and "transmission" in name:
             fpk_asset = a
             break
+    # fallback：无当前架构资产时，取任意 transmission fpk
+    if not fpk_asset:
+        for a in data.get("assets", []):
+            name = a.get("name", "")
+            if name.endswith(".fpk") and "transmission" in name:
+                fpk_asset = a
+                break
     return {
         "version": version,
         "changelog": data.get("body", ""),
         "publishedAt": data.get("published_at", ""),
         "releaseUrl": data.get("html_url", ""),
         "fpkUrl": fpk_asset.get("browser_download_url", "") if fpk_asset else "",
-        "fpkSize": fpk_asset.get("size", 0) if fpk_asset else 0
+        "fpkSize": fpk_asset.get("size", 0) if fpk_asset else 0,
+        "arch": arch
     }
 
 def _get_current_version():
@@ -455,6 +478,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                         "publishedAt": info["publishedAt"],
                         "releaseUrl": info["releaseUrl"],
                         "fpkUrl": info["fpkUrl"],
+                        "arch": CURRENT_ARCH,
                         "message": "发现新版本" if has_update else "已是最新版本"
                     }
                     _cached_version = {"expires": now + 300, "data": result}
@@ -501,7 +525,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 return True
             try:
                 ver = _update_status.get("version") or _get_current_version()
-                filename = f"transmission-{ver}-arm64.fpk"
+                filename = f"transmission-{ver}-{CURRENT_ARCH}.fpk"
                 sz = os.path.getsize(fpk_path)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/octet-stream")
