@@ -3,16 +3,24 @@
 #   .\build.ps1                                 # Build with default version from manifest
 #   .\build.ps1 -AppVersion 4.1.1               # Build with custom app version (output filename)
 #   .\build.ps1 -TransmissionVersion 4.0.5      # Build with specific transmission daemon version
+#   .\build.ps1 -Arch amd64                     # Build for amd64 (default: arm64)
 #   .\build.ps1 -AppVersion 4.1.1 -TransmissionVersion 4.0.5  # Custom both
 #   .\build.ps1 -ListVersions                    # List available transmission versions
 
 param(
     [string]$AppVersion = "",
     [string]$TransmissionVersion = "",
+    [string]$Arch = "arm64",
     [switch]$ListVersions
 )
 
 $ErrorActionPreference = "Stop"
+
+# Validate architecture
+if ($Arch -notin @("arm64", "amd64")) {
+    Write-Host "ERROR: Unsupported architecture '$Arch'. Supported: arm64, amd64" -ForegroundColor Red
+    exit 1
+}
 
 $PROJECT_DIR = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 $MANIFEST_FILE = Join-Path $PROJECT_DIR "manifest"
@@ -68,7 +76,7 @@ if ($ListVersions) {
     }
     exit 0
 }
-$ARCH = "arm64"
+$ARCH = $Arch
 $BUILD_DIR = Join-Path $PROJECT_DIR ".local-build"
 $FNPACK_URL = "https://static2.fnnas.com/fnpack/fnpack-1.2.3-windows-amd64"
 $GITHUB_RELEASES_URL = "https://github.com/sushazhi/fnos-transmission/releases/download"
@@ -77,6 +85,7 @@ $WEBUI_BASE = "https://ghfast.top/https://github.com/sushazhi/transmission-web/r
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  Transmission for fnOS - Local Build" -ForegroundColor Cyan
 Write-Host "  Version: $APP_VERSION" -ForegroundColor Gray
+Write-Host "  Arch: $ARCH" -ForegroundColor Gray
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -107,56 +116,72 @@ Write-Host "[3/6] Preparing transmission-daemon..." -ForegroundColor Yellow
 $targetVersion = if ($TransmissionVersion) { $TransmissionVersion } else { $DEFAULT_TRANSMISSION_VERSION }
 Write-Host "  Transmission version: $targetVersion" -ForegroundColor Gray
 
-$daemonCache = Join-Path $BUILD_DIR "transmission-daemon-$targetVersion"
+$daemonCache = Join-Path $BUILD_DIR "transmission-daemon-$targetVersion-$ARCH"
+$daemonCacheLegacy = Join-Path $BUILD_DIR "transmission-daemon-$targetVersion"
 $daemonTarget = "$BUILD_DIR\app\bin\transmission-daemon"
 
-if ((Test-Path $daemonCache)) {
+if ((Test-Path $daemonCache) -or (Test-Path $daemonCacheLegacy)) {
     Write-Host "  Using cached binary" -ForegroundColor Green
-    Copy-Item $daemonCache $daemonTarget -Force
+    if (Test-Path $daemonCache) { Copy-Item $daemonCache $daemonTarget -Force }
+    else { Copy-Item $daemonCacheLegacy $daemonTarget -Force }
 } else {
     Write-Host "  Downloading from release v$targetVersion..." -ForegroundColor Yellow
-    $daemonUrl = "$GITHUB_RELEASES_URL/v$targetVersion/transmission-daemon-$targetVersion"
-    try {
-        Invoke-WebRequest -Uri $daemonUrl -OutFile $daemonCache -UseBasicParsing
-        Copy-Item $daemonCache $daemonTarget -Force
-        Write-Host "  Downloaded" -ForegroundColor Green
-    } catch {
-        $daemonUrl2 = "$GITHUB_RELEASES_URL/v$targetVersion/transmission-daemon"
+    # Try arch-suffixed (new releases) -> version-suffixed -> plain (legacy releases)
+    $daemonUrls = @(
+        "$GITHUB_RELEASES_URL/v$targetVersion/transmission-daemon-$targetVersion-$ARCH",
+        "$GITHUB_RELEASES_URL/v$targetVersion/transmission-daemon-$targetVersion",
+        "$GITHUB_RELEASES_URL/v$targetVersion/transmission-daemon"
+    )
+    $downloaded = $false
+    foreach ($url in $daemonUrls) {
         try {
-            Invoke-WebRequest -Uri $daemonUrl2 -OutFile $daemonCache -UseBasicParsing
+            Invoke-WebRequest -Uri $url -OutFile $daemonCache -UseBasicParsing
             Copy-Item $daemonCache $daemonTarget -Force
-            Write-Host "  Downloaded" -ForegroundColor Green
+            Write-Host "  Downloaded ($url)" -ForegroundColor Green
+            $downloaded = $true
+            break
         } catch {
-            Write-Host "  ERROR: Failed to download transmission-daemon from release v$targetVersion" -ForegroundColor Red
-            Write-Host "  Make sure release v$targetVersion exists with transmission-daemon" -ForegroundColor Yellow
-            exit 1
+            Write-Host "  Not found: $url" -ForegroundColor DarkGray
         }
+    }
+    if (-not $downloaded) {
+        Write-Host "  ERROR: Failed to download transmission-daemon for $ARCH from release v$targetVersion" -ForegroundColor Red
+        Write-Host "  Make sure release v$targetVersion exists with transmission-daemon asset" -ForegroundColor Yellow
+        exit 1
     }
 }
 
 # Get libminiupnpc
 Write-Host "[4/6] Preparing libminiupnpc..." -ForegroundColor Yellow
-$libCache = Join-Path $BUILD_DIR "libminiupnpc.so.17-$targetVersion"
+$libCache = Join-Path $BUILD_DIR "libminiupnpc.so.17-$targetVersion-$ARCH"
+$libCacheLegacy = Join-Path $BUILD_DIR "libminiupnpc.so.17-$targetVersion"
 $libTarget = "$BUILD_DIR\app\lib\libminiupnpc.so.17"
-if ((Test-Path $libCache)) {
+if ((Test-Path $libCache) -or (Test-Path $libCacheLegacy)) {
     Write-Host "  Using cached" -ForegroundColor Green
-    Copy-Item $libCache $libTarget -Force
+    if (Test-Path $libCache) { Copy-Item $libCache $libTarget -Force }
+    else { Copy-Item $libCacheLegacy $libTarget -Force }
 } else {
     Write-Host "  Downloading from release v$targetVersion..." -ForegroundColor Yellow
-    $libUrl = "$GITHUB_RELEASES_URL/v$targetVersion/libminiupnpc.so.17-$targetVersion"
-    try {
-        Invoke-WebRequest -Uri $libUrl -OutFile $libCache -UseBasicParsing
-        Copy-Item $libCache $libTarget -Force
-        Write-Host "  Downloaded" -ForegroundColor Green
-    } catch {
-        $libUrl2 = "$GITHUB_RELEASES_URL/v$targetVersion/libminiupnpc.so.17"
+    # Try arch-suffixed (new releases) -> version-suffixed -> plain (legacy releases)
+    $libUrls = @(
+        "$GITHUB_RELEASES_URL/v$targetVersion/libminiupnpc.so.17-$targetVersion-$ARCH",
+        "$GITHUB_RELEASES_URL/v$targetVersion/libminiupnpc.so.17-$targetVersion",
+        "$GITHUB_RELEASES_URL/v$targetVersion/libminiupnpc.so.17"
+    )
+    $libDownloaded = $false
+    foreach ($url in $libUrls) {
         try {
-            Invoke-WebRequest -Uri $libUrl2 -OutFile $libCache -UseBasicParsing
+            Invoke-WebRequest -Uri $url -OutFile $libCache -UseBasicParsing
             Copy-Item $libCache $libTarget -Force
-            Write-Host "  Downloaded" -ForegroundColor Green
+            Write-Host "  Downloaded ($url)" -ForegroundColor Green
+            $libDownloaded = $true
+            break
         } catch {
-            Write-Host "  Warning: libminiupnpc.so.17 not available in release v$targetVersion" -ForegroundColor Yellow
+            Write-Host "  Not found: $url" -ForegroundColor DarkGray
         }
+    }
+    if (-not $libDownloaded) {
+        Write-Host "  Warning: libminiupnpc.so.17 not available for $ARCH in release v$targetVersion" -ForegroundColor Yellow
     }
 }
 

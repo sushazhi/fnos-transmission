@@ -21,17 +21,20 @@ permissions:
 
 env:
   WEBUI_VERSION: "latest"
-  ARCH: arm64
 
 jobs:
   build:
     name: Build Transmission - ${{ matrix.arch }}
-    runs-on: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        arch: [arm64]
+        include:
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+          - arch: amd64
+            runner: ubuntu-22.04
 
     steps:
       - name: Checkout repository
@@ -98,30 +101,55 @@ jobs:
         id: check_builds
         run: |
           TRANSMISSION_VERSION="${{ env.TRANSMISSION_VERSION }}"
+          ARCH="${{ matrix.arch }}"
           BUILDS_DIR="/tmp/builds/${TRANSMISSION_VERSION}"
           mkdir -p "$BUILDS_DIR"
 
           # Always try to download prebuilt binaries from release v{3-part-version}
           echo "Checking for prebuilt binaries in release v${TRANSMISSION_VERSION}..."
           
-          # Download all assets from the release
+          # Download arch-specific assets from the release
+          DAEMON_ASSET="transmission-daemon-${TRANSMISSION_VERSION}-${ARCH}"
+          LIB_ASSET="libminiupnpc.so.17-${TRANSMISSION_VERSION}-${ARCH}"
+          
           if gh release download "v${TRANSMISSION_VERSION}" \
+            --pattern "${DAEMON_ASSET}" \
             --dir "$BUILDS_DIR" \
             --clobber 2>/dev/null; then
-            echo "Downloaded release assets:"
-            ls -la "$BUILDS_DIR"
-            
-            # Rename to expected names
-            if [ -f "$BUILDS_DIR/transmission-daemon-${TRANSMISSION_VERSION}" ]; then
-              mv "$BUILDS_DIR/transmission-daemon-${TRANSMISSION_VERSION}" "$BUILDS_DIR/transmission-daemon"
-              echo "Found transmission-daemon"
-            fi
-            if [ -f "$BUILDS_DIR/libminiupnpc.so.17-${TRANSMISSION_VERSION}" ]; then
-              mv "$BUILDS_DIR/libminiupnpc.so.17-${TRANSMISSION_VERSION}" "$BUILDS_DIR/libminiupnpc.so.17"
-              echo "Found libminiupnpc.so.17"
-            fi
+            echo "Downloaded release asset: ${DAEMON_ASSET}"
+            mv "$BUILDS_DIR/${DAEMON_ASSET}" "$BUILDS_DIR/transmission-daemon"
+            echo "Found transmission-daemon"
           else
-            echo "Failed to download from release v${TRANSMISSION_VERSION}"
+            echo "Asset ${DAEMON_ASSET} not found, trying legacy name..."
+            if gh release download "v${TRANSMISSION_VERSION}" \
+              --pattern "transmission-daemon-${TRANSMISSION_VERSION}" \
+              --dir "$BUILDS_DIR" \
+              --clobber 2>/dev/null; then
+              if [ -f "$BUILDS_DIR/transmission-daemon-${TRANSMISSION_VERSION}" ]; then
+                mv "$BUILDS_DIR/transmission-daemon-${TRANSMISSION_VERSION}" "$BUILDS_DIR/transmission-daemon"
+                echo "Found transmission-daemon (legacy)"
+              fi
+            fi
+          fi
+
+          if gh release download "v${TRANSMISSION_VERSION}" \
+            --pattern "${LIB_ASSET}" \
+            --dir "$BUILDS_DIR" \
+            --clobber 2>/dev/null; then
+            echo "Downloaded release asset: ${LIB_ASSET}"
+            mv "$BUILDS_DIR/${LIB_ASSET}" "$BUILDS_DIR/libminiupnpc.so.17"
+            echo "Found libminiupnpc.so.17"
+          else
+            echo "Asset ${LIB_ASSET} not found, trying legacy name..."
+            if gh release download "v${TRANSMISSION_VERSION}" \
+              --pattern "libminiupnpc.so.17-${TRANSMISSION_VERSION}" \
+              --dir "$BUILDS_DIR" \
+              --clobber 2>/dev/null; then
+              if [ -f "$BUILDS_DIR/libminiupnpc.so.17-${TRANSMISSION_VERSION}" ]; then
+                mv "$BUILDS_DIR/libminiupnpc.so.17-${TRANSMISSION_VERSION}" "$BUILDS_DIR/libminiupnpc.so.17"
+                echo "Found libminiupnpc.so.17 (legacy)"
+              fi
+            fi
           fi
 
           # Check if we have the required binaries
@@ -177,7 +205,7 @@ jobs:
           echo "WebUI structure:"
           ls -la /tmp/webui | head -10
 
-      - name: Build Transmission for ARM64
+      - name: Build Transmission for ${{ matrix.arch }}
         if: steps.check_builds.outputs.use_prebuilt != 'true'
         run: |
           cd /tmp/transmission-build
@@ -185,7 +213,7 @@ jobs:
           mkdir -p build
           cd build
 
-          # Configure for native ARM64 build - use GCC to avoid clang-tidy crash
+          # Configure for native build on the runner arch - use GCC to avoid clang-tidy crash
           export CC=gcc CXX=g++
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
@@ -360,13 +388,18 @@ jobs:
 
       - name: Download fnpack
         run: |
-          wget -q https://static2.fnnas.com/fnpack/fnpack-1.2.3-linux-arm -O fnpack
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            FNPACK_BINARY="fnpack-1.2.3-linux-amd64"
+          else
+            FNPACK_BINARY="fnpack-1.2.3-linux-arm"
+          fi
+          wget -q "https://static2.fnnas.com/fnpack/${FNPACK_BINARY}" -O fnpack
           chmod +x fnpack
 
       - name: Build .fpk package
         run: |
           ./fnpack build .
-          PACKAGE_NAME="transmission-${APP_VERSION}-arm64.fpk"
+          PACKAGE_NAME="transmission-${APP_VERSION}-${{ matrix.arch }}.fpk"
           mv transmission.fpk "${PACKAGE_NAME}"
           echo "PACKAGE_NAME=${PACKAGE_NAME}" >> $GITHUB_ENV
 
@@ -393,7 +426,7 @@ jobs:
           **Version:** ${{ env.APP_VERSION }}
           **Transmission Version:** ${{ steps.versions.outputs.TRANSMISSION_VERSION }}
           **WebUI Version:** ${{ steps.versions.outputs.WEBUI_VERSION }}
-          **Architecture:** arm64
+          **Architecture:** ${{ matrix.arch }}
           **Is Release Version:** ${{ env.IS_RELEASE_VERSION }}
 
           **Build Type:** ${BUILD_TYPE}
@@ -404,7 +437,7 @@ jobs:
           - Triggered by: ${{ github.event_name }}
 
           **Components:**
-          - Transmission daemon: ARM64 binary
+          - Transmission daemon: ${{ matrix.arch }} binary
           - WebUI: transmission-web v${{ steps.versions.outputs.WEBUI_VERSION }}
 
           **Build Artifacts:**
@@ -420,18 +453,33 @@ jobs:
           CHANGELOG="$CHANGELOG_RAW"
 
           echo "Publishing release..."
-          if [ "${{ steps.check_builds.outputs.use_prebuilt }}" = "true" ]; then
-            gh release create "${{ github.ref_name }}" \
-              "transmission-${APP_VERSION}-arm64.fpk" \
-              --title "${{ github.ref_name }}" \
-              --notes "$CHANGELOG"
+          RELEASE_TAG="${{ github.ref_name }}"
+          ARCH="${{ matrix.arch }}"
+          PACKAGE="transmission-${APP_VERSION}-${ARCH}.fpk"
+
+          # Create the release if it doesn't exist yet (race-safe for parallel matrix jobs)
+          if gh release create "$RELEASE_TAG" \
+            --title "$RELEASE_TAG" \
+            --notes "$CHANGELOG" 2>/dev/null; then
+            echo "Release $RELEASE_TAG created"
           else
-            gh release create "${{ github.ref_name }}" \
-              "transmission-${APP_VERSION}-arm64.fpk" \
-              "app/bin/transmission-daemon#transmission-daemon-${TRANSMISSION_VERSION}" \
-              "app/lib/libminiupnpc.so.17#libminiupnpc.so.17-${TRANSMISSION_VERSION}" \
-              --title "${{ github.ref_name }}" \
-              --notes "$CHANGELOG"
+            echo "Release $RELEASE_TAG already exists (or was created by another job), uploading $ARCH assets..."
+          fi
+
+          # Upload package (with clobber in case another job raced us)
+          gh release upload "$RELEASE_TAG" "${PACKAGE}" --clobber || true
+
+          # Upload prebuilt binaries as arch-suffixed release assets so they can be reused
+          if [ "${{ steps.check_builds.outputs.use_prebuilt }}" != "true" ]; then
+            echo "Uploading $ARCH prebuilt binaries..."
+            gh release upload "$RELEASE_TAG" \
+              "app/bin/transmission-daemon#transmission-daemon-${TRANSMISSION_VERSION}-${ARCH}" \
+              --clobber || echo "WARNING: Failed to upload transmission-daemon"
+            if [ -f "app/lib/libminiupnpc.so.17" ]; then
+              gh release upload "$RELEASE_TAG" \
+                "app/lib/libminiupnpc.so.17#libminiupnpc.so.17-${TRANSMISSION_VERSION}-${ARCH}" \
+                --clobber || echo "WARNING: Failed to upload libminiupnpc.so.17"
+            fi
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
