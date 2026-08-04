@@ -8,7 +8,7 @@
 [![Platform](https://img.shields.io/badge/Platform-fnOS-green?style=flat-square)](https://www.fnnas.com/)
 [![License](https://img.shields.io/badge/License-GPL--2.0-blue?style=flat-square)](https://www.gnu.org/licenses/gpl-2.0.html)
 
-> 📌 **注意**：本应用目前仅支持 **ARM64 架构**，系统要求 **fnOS v1.1.19 及以上**。
+> 📌 **注意**：本应用支持 **ARM64 (aarch64)** 和 **amd64 (x86_64)** 架构，系统要求 **fnOS v1.1.19 及以上**。
 
 ---
 
@@ -39,7 +39,7 @@
 
 | 组件 | 要求 |
 |------|------|
-| transmission-daemon | 需从 [builds/4.1.1/](builds/4.1.1/) 获取（ARM64 编译产物） |
+| transmission-daemon | 需从 [builds/4.1.1/](builds/4.1.1/) 获取（对应架构的编译产物） |
 
 ### Windows 构建（推荐）
 
@@ -49,16 +49,19 @@
 # 进入项目目录
 cd fnos-transmission
 
-# 运行构建（默认版本 4.1.1）
+# 运行构建（默认版本 4.1.1，架构 arm64）
 .\build.ps1
 
 # 指定版本构建
 .\build.ps1 -Version "4.1.1"
+
+# 指定架构构建（amd64）
+.\build.ps1 -Arch amd64
 ```
 
 ### CI 构建
 
-GitHub Actions 会自动构建，产物发布在：
+GitHub Actions 会自动为 **arm64** 和 **amd64** 两种架构构建，产物发布在：
 - [Releases](https://github.com/sushazhi/fnos-transmission/releases)
 - CI 运行页面下载 artifacts
 
@@ -68,7 +71,8 @@ GitHub Actions 会自动构建，产物发布在：
 
 | 文件 | 说明 |
 |------|------|
-| `transmission-4.1.1-arm64.fpk` | fnOS 安装包 |
+| `transmission-4.1.1-arm64.fpk` | fnOS 安装包（ARM64） |
+| `transmission-4.1.1-amd64.fpk` | fnOS 安装包（amd64） |
 | `.local-build/` | 构建缓存目录（可删除） |
 
 ---
@@ -78,8 +82,8 @@ GitHub Actions 会自动构建，产物发布在：
 | 项目 | 默认值 |
 |------|--------|
 | 访问地址 | `http://<NAS_IP>:9090/transmission/` |
-| 默认端口 | 9090 (可在安装或应用设置中修改) |
-| 架构 | ARM64 (aarch64) |
+| 默认端口 | 9090 (可在应用设置中修改) |
+| 架构 | ARM64 (aarch64) / amd64 (x86_64) |
 
 > 📌 **端口修改**：安装或应用设置中可自定义端口
 
@@ -91,12 +95,13 @@ GitHub Actions 会自动构建，产物发布在：
 
 ## 🔧 端口配置
 
-本应用支持在安装时或应用设置中自定义 WebUI 端口：
+本应用采用 fnOS **统一网关**访问（桌面图标或固定网关地址），默认情况下无需修改端口。如需要，可在**应用设置**中修改 WebUI/RPC 端口：
 
 | 方式 | 说明 |
 |------|------|
-| **安装时** | 在安装向导中设置应用端口 |
-| **应用设置** | 在"应用设置"中修改端口，保存后自动重启应用 |
+| **应用设置** | 在"应用设置"中修改 WebUI/RPC 端口，保存后自动重启应用 |
+
+> 📌 **说明**：通过统一网关访问仍使用固定地址，此端口为本机内部 RPC 服务及直连访问使用。
 
 ---
 

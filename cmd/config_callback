@@ -44,16 +44,32 @@ chown -R package:package "$DATA_DIR" 2>/dev/null || true
 RPC_USERNAME="${wizard_rpc_username:-${RPC_USERNAME:-admin}}"
 RPC_PASSWORD="${wizard_rpc_password:-${RPC_PASSWORD:-password}}"
 
-# 网关模式：端口固定内部值
-WEBUI_PORT="9090"
+# 网关模式：端口固定内部值，默认9090；可从配置向导修改
+WEBUI_PORT="${wizard_webui_port:-9090}"
+# 校验端口为 1-65535 的整数，否则回退到默认值
+if ! [[ "$WEBUI_PORT" =~ ^[1-9][0-9]{0,4}$ ]] || [ "$WEBUI_PORT" -lt 1 ] || [ "$WEBUI_PORT" -gt 65535 ]; then
+    echo "警告：无效端口 $WEBUI_PORT，使用默认 9090" >&2
+    WEBUI_PORT="9090"
+fi
 
 # 读取现有配置或创建新配置
 if [ -f "$CONFIG_DIR" ]; then
-    echo "检测到已有配置文件，保留其他设置并更新用户名、密码..."
+    echo "检测到已有配置文件，保留其他设置并更新用户名、密码、端口..."
     
     # 使用 sed 更新 JSON 配置文件中的指定字段，保留其他用户配置
     sed -i "s|\"rpc-username\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"rpc-username\": \"${RPC_USERNAME}\"|g" "$CONFIG_DIR"
     sed -i "s|\"rpc-password\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"rpc-password\": \"${RPC_PASSWORD}\"|g" "$CONFIG_DIR"
+    
+    # 更新 rpc-port，保留其他设置
+    if grep -q '"rpc-port"' "$CONFIG_DIR"; then
+        sed -i "s|\"rpc-port\"[[:space:]]*:[[:space:]]*[0-9]*|\"rpc-port\": ${WEBUI_PORT}|g" "$CONFIG_DIR"
+    else
+        sed -i '/"rpc-bind-address"/a\    "rpc-port": '"${WEBUI_PORT}"',' "$CONFIG_DIR"
+    fi
+    
+    # 校验结果
+    PORT_RESULT=$(python3 -c "import json; print(json.load(open('$CONFIG_DIR')).get('rpc-port','?'))" 2>/dev/null)
+    echo "配置端口: ${PORT_RESULT:-$WEBUI_PORT}"
     
     # 网关模式：禁用RPC认证、绑定127.0.0.1
     sed -i 's|"rpc-authentication-required"[[:space:]]*:[[:space:]]*[^,]*|"rpc-authentication-required": false|g' "$CONFIG_DIR"

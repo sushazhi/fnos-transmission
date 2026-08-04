@@ -1,7 +1,7 @@
 appname = transmission
 version = 4.1.3.2
 display_name = Transmission
-desc = <b>轻量级BitTorrent下载工具</b>，支持磁力链接、种子文件、DHT/PEX/LSD P2P网络。<br><br>✨ <b>默认启用Transmission Web</b>，现代简洁，响应式设计。<br><br>📋 <b>端口修改：</b>安装或应用设置中可自定义端口。<br><br>🐛 <b>问题反馈：</b><a href="https://github.com/sushazhi/fnos-transmission/issues" target="_blank">GitHub Issues</a>
+desc = <b>轻量级BitTorrent下载工具</b>，支持磁力链接、种子文件、DHT/PEX/LSD P2P网络。<br><br>✨ <b>默认启用Transmission Web</b>，现代简洁，响应式设计。<br><br>🌐 <b>访问方式：</b>通过fnOS统一网关（桌面图标）访问，无需配置端口。<br><br>🔧 <b>端口修改：</b>如需自定义本机内部WebUI/RPC端口，可在<b>应用设置</b>中修改。<br><br>🐛 <b>问题反馈：</b><a href="https://github.com/sushazhi/fnos-transmission/issues" target="_blank">GitHub Issues</a>
 
 # 系统要求
 platform = all
@@ -22,4 +22,4 @@ desktop_uidir = ui
 desktop_applaunchname = transmission.Application
 
 # 更新日志
-changelog = 更新日志<br>v4.1.3.2: 修复 @apptemp 目录权限导致 Transmission 反复重启的问题
+changelog = 更新日志<br>v4.1.3.2:<br>1. 修复 @apptemp 目录权限导致 Transmission 反复重启的问题<br>2. 添加对 amd64 (x86_64) 架构支持

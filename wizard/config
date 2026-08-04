@@ -40,6 +40,26 @@
             "message": "密码长度不能少于6位"
           }
         ]
+      },
+      {
+        "type": "text",
+        "field": "wizard_webui_port",
+        "label": "WebUI/RPC 端口",
+        "initValue": "9090",
+        "rules": [
+          {
+            "required": true,
+            "message": "请输入端口号"
+          },
+          {
+            "pattern": "^[1-9][0-9]{0,4}$",
+            "message": "端口号必须为 1-65535 之间的整数"
+          }
+        ]
+      },
+      {
+        "type": "tips",
+        "helpText": "📍 <b>端口说明：</b>通过 fnOS 统一网关访问时仍使用固定地址 /app/transmission，此端口用于本机内部 RPC 服务与直连访问。修改后保存将重启应用使配置生效"
       }
     ]
   }
