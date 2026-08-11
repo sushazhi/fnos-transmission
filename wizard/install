@@ -25,20 +25,20 @@
     "items": [
       {
         "type": "tips",
-        "helpText": "设置 Transmission 的下载保存目录"
+        "helpText": "✅ <b>默认使用应用数据目录下的 downloads 文件夹</b>，无需手动填写，直接下一步即可"
       },
       {
         "type": "tips",
-        "helpText": "⚠️ <b>目录必须已存在（否则会导致安装失败）</b>，请先在文件管理中创建"
+        "helpText": "🔐 <b>访问权限：</b>下载目录在系统设置 - 应用 - Transmission 中默认已授权访问"
       },
       {
         "type": "tips",
-        "helpText": "🔐 <b>安装后请设置文件夹访问权限：</b>前往【系统设置 - 应用 - Transmission】设置允许访问的文件夹"
+        "helpText": "🎯 <b>更改下载目录：</b>安装后可在应用页面内使用文件选择器重新选择下载保存目录"
       },
       {
         "type": "text",
         "field": "wizard_save_path",
-        "label": "下载保存目录",
+        "label": "下载保存目录（可选修改）",
         "initValue": "/vol1/@appshare/transmission/downloads/",
         "rules": [
           {
@@ -49,26 +49,27 @@
       },
       {
         "type": "tips",
-        "helpText": "💡 下载的文件将直接保存到此目录"
+        "helpText": "💡 下载的文件将直接保存到此目录；默认目录会在启动时自动创建"
       }
     ]
   },
   {
-    "stepTitle": "🔐 配置访问凭证",
+    "stepTitle": "🔐 配置访问凭证（可跳过）",
     "items": [
       {
         "type": "tips",
         "helpText": "💡 <b>设置WebUI访问用户名和密码</b>，安装后可随时在设置中修改"
       },
       {
+        "type": "tips",
+        "helpText": "⏭️ <b>可跳过：</b>重装/升级时若已存在配置，留空用户名和密码将<b>保留原有账号信息</b>"
+      },
+      {
         "type": "text",
         "field": "wizard_rpc_username",
-        "label": "用户名",
+        "label": "用户名（留空保留已有）",
+        "initValue": "",
         "rules": [
-          {
-            "required": true,
-            "message": "请输入用户名"
-          },
           {
             "min": 2,
             "max": 20,
@@ -83,17 +84,18 @@
       {
         "type": "password",
         "field": "wizard_rpc_password",
-        "label": "密码",
+        "label": "密码（留空保留已有）",
+        "initValue": "",
         "rules": [
-          {
-            "required": true,
-            "message": "请输入密码"
-          },
           {
             "min": 6,
             "message": "密码长度不能少于6位"
           }
         ]
+      },
+      {
+        "type": "tips",
+        "helpText": "🔑 用户名或密码留空时，将保留已有配置中的对应项<br>⚠️ 首次安装（无已有配置）时，请务必设置用户名和密码"
       }
     ]
   }

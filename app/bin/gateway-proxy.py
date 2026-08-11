@@ -21,7 +21,7 @@ _current_port = INITIAL_PORT
 _port_check_time = 0
 _port_lock = threading.Lock()
 
-INJECT_SCRIPT = b'''<script>
+INJECT_SCRIPT = '''<script>
 (function(){
 var P="/app/transmission";
 try{var k=Object.keys(localStorage);for(var i=0;i<k.length;i++){var v=localStorage.getItem(k[i]);if(v&&v.includes&&(v.includes(':9090')||v.includes(':9091'))){localStorage.removeItem(k[i]);}}}catch(e){}
@@ -77,7 +77,128 @@ window.WebSocket.CLOSING=_cw.CLOSING;
 window.WebSocket.CLOSED=_cw.CLOSED;
 }
 })();
-</script>'''
+</script>
+<script>
+(function(){
+if(window.self===window.top){return;}
+var P="/app/transmission";
+var _dlPath="";
+var _dlPathDisplay="";
+/* ===== fnOS SDK（Penpal 最小桥接） ===== */
+var __trSdk=(function(){
+var connected=false,methods={},pending={},msgId=1,listeners={};
+function connect(){window.parent.postMessage({penpal:"syn"},"*");setTimeout(function(){if(!connected){window.__TR_SDK_READY=true;window.dispatchEvent(new Event("tr-sdk-ready"));}},1500);}
+window.addEventListener("message",function(ev){
+var d=ev.data;if(!d||!d.penpal)return;
+if(d.penpal==="synAck"){methods=d.methodNames||[];window.parent.postMessage({penpal:"ack",methodNames:[],config:{}},"*");connected=true;window.__TR_SDK_READY=true;window.dispatchEvent(new Event("tr-sdk-ready"));}
+else if(d.penpal==="reply"){var cb=pending[d.id];if(cb){delete pending[d.id];if(d.resolution==="fulfilled"){cb.resolve(d.returnValue);}else{cb.reject(new Error((d.returnValue&&d.returnValue.message)||"call failed"));}}}
+});
+function call(methodName,args){return new Promise(function(resolve,reject){var id=msgId++;pending[id]={resolve:resolve,reject:reject};var payload={penpal:"call",id:id,methodName:methodName,args:args||[]};if(!connected){setTimeout(function(){connect();},0);}window.parent.postMessage(payload,"*");});}
+function has(m){return connected&&methods.indexOf(m)>-1;}
+return {
+get ready(){return connected;},isWeb:true,has:has,call:call,
+$on:function(evt,cb){listeners[evt]=listeners[evt]||[];listeners[evt].push(cb);return function(){};},
+$off:function(evt,cb){var l=listeners[evt];if(l){var i=l.indexOf(cb);if(i>-1)l.splice(i,1);}},
+$notify:function(opts){return call("$notify",[opts||{}]);},
+getPlatformConfig:function(){return call("getPlatformConfig",[]);},
+setTitle:function(t){return call("setTitle",[t]);},
+openFileManager:function(p){return call("openFileManager",[p]);},
+convertPath:function(p,l){return call("convertPath",[p,l]);},
+pickUserFile:function(opts){return call("pickUserFile",[opts||{}]);},
+pickSharedFile:function(opts){return call("pickSharedFile",[opts||{}]);}
+};
+})();
+var sdk=__trSdk;
+setTimeout(function(){window.parent.postMessage({penpal:"syn"},"*");},0);
+/* ===== 获取下载路径 ===== */
+fetch(P+"/api/download-path").then(function(r){return r.json();}).then(function(d){
+if(d.success&&d.path){_dlPath=d.path;_dlPathDisplay=d.displayPath||d.path;
+if(!d.hasACL){console.warn("[TR] 下载目录权限不足:",d.path);}
+var fb=document.getElementById("tr-openfolder-btn");if(fb)fb.title="打开下载目录: "+_dlPathDisplay;}
+}).catch(function(){});
+/* ===== 通知 ===== */
+function _trNotify(t,m){
+var colors={success:"#22c55e",error:"#ef4444",warning:"#f59e0b",info:"#3b82f6"};
+var icons={success:"✓",error:"✕",warning:"!",info:"ℹ"};
+var c=colors[t]||"#3b82f6";
+var el=document.createElement("div");
+el.style.position="fixed";el.style.top="16px";el.style.right="16px";el.style.zIndex="2147483647";
+el.style.display="flex";el.style.alignItems="center";el.style.gap="10px";el.style.maxWidth="360px";
+el.style.padding="12px 16px";el.style.background="rgba(30,32,38,0.95)";el.style.borderLeft="4px solid "+c;
+el.style.borderRadius="8px";el.style.color="#fff";el.style.fontSize="13px";el.style.boxShadow="0 8px 24px rgba(0,0,0,0.35)";
+var icon=document.createElement("span");icon.style.width="18px";icon.style.height="18px";icon.style.flexShrink="0";
+icon.style.borderRadius="50%";icon.style.background=c;icon.style.color="#fff";icon.style.display="flex";
+icon.style.alignItems="center";icon.style.justifyContent="center";icon.style.fontSize="12px";icon.style.fontWeight="bold";
+icon.textContent=icons[t]||"ℹ";
+var txt=document.createElement("span");txt.style.flex="1";txt.style.wordBreak="break-all";txt.textContent=m;
+el.appendChild(icon);el.appendChild(txt);document.body.appendChild(el);
+setTimeout(function(){if(el.parentNode)el.parentNode.removeChild(el);},3500);
+}
+/* ===== 按钮注入 ===== */
+function _trAddBtn(){
+try{
+var fe=window.frameElement;if(!fe)return;
+var h=fe.closest(".trim-ui__app-layout--window");
+if(h){h=h.querySelector(".trim-ui__app-layout--header");if(h){
+var r=h.querySelector(":scope > div:last-child");
+if(r&&!r.querySelector("#tr-pickfolder-btn")){
+/* 选择下载目录按钮 */
+var c=document.createElement("div");
+c.id="tr-pickfolder-btn";c.title="选择下载目录";
+c.className="flex h-full w-base shrink-0 cursor-pointer items-center justify-center px-[15px] text-[var(--semi-color-text-0)] hover:bg-[var(--semi-color-fill-0)]";
+c.innerHTML='<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v14m-7-7h14"/></svg>';
+c.onclick=function(e){e.stopPropagation();
+var P="/app/transmission";
+var opts={multiple:false,directory:true,title:"选择下载目录",okText:"确认选择",sidebarGroup:["myFiles","otherShare","favorites"]};
+var doPick=function(){
+var sel=sdk&&sdk.pickUserFile?sdk.pickUserFile.bind(sdk):null;
+if(!sel){_trNotify("error","文件选择器不可用");return;}
+sel(opts).then(function(res){
+var p=null;
+if(Array.isArray(res)){p=res[0];}
+else if(res&&res.data){p=Array.isArray(res.data)?res.data[0]:res.data;}
+else if(res&&res.paths&&res.paths.length){p=res.paths[0];}
+if(!p){_trNotify("warning","未选择目录");return;}
+fetch(P+"/api/set-save-path",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:p})}).then(function(r){return r.json();}).then(function(r2){
+if(r2.success){_trNotify("success",r2.applied?("下载目录已设置为: "+p):("配置已保存，请重启应用后生效"));}
+else{_trNotify("error","设置失败: "+(r2.error||"未知错误"));}
+}).catch(function(){_trNotify("error","设置失败，网络错误");});
+}).catch(function(err){
+var m=(err&&err.message)||"无法打开文件选择器";
+if(m.indexOf("cancel")>-1||m.indexOf("canceled")>-1){return;}
+_trNotify("error","选择目录失败: "+m);
+});
+};
+if(!sdk.ready){setTimeout(doPick,800);}else{doPick();}
+};
+r.insertBefore(c,r.firstChild);
+/* 打开下载目录按钮 */
+var f=document.createElement("div");
+f.id="tr-openfolder-btn";f.title="打开下载目录";
+f.className="flex h-full w-base shrink-0 cursor-pointer items-center justify-center px-[15px] text-[var(--semi-color-text-0)] hover:bg-[var(--semi-color-fill-0)]";
+f.innerHTML='<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2 6a2 2 0 0 1 2-2h5l2 2h9a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6z"/></svg>';
+f.onclick=function(e){e.stopPropagation();
+var P="/app/transmission";
+fetch(P+"/api/download-path").then(function(r){return r.json();}).then(function(d){
+if(d.success&&d.path){
+sdk.openFileManager(d.path).catch(function(){
+var inp=document.createElement("textarea");inp.value=d.path;inp.style.position="fixed";inp.style.opacity="0";
+document.body.appendChild(inp);inp.select();document.execCommand("copy");document.body.removeChild(inp);
+_trNotify("error","打开失败，下载目录路径已复制: "+d.path);
+});
+}else{_trNotify("error","无法获取下载目录路径");}
+}).catch(function(){_trNotify("error","获取下载目录失败");});
+};
+r.insertBefore(f,r.firstChild);
+}
+}
+}
+}catch(e){}
+}
+if(document.readyState==="complete"){_trAddBtn();}else{window.addEventListener("load",_trAddBtn);}
+setTimeout(_trAddBtn,2000);setTimeout(_trAddBtn,6000);
+})();
+</script>'''.encode('utf-8')
 
 # 注入当前架构到前端
 INJECT_SCRIPT = INJECT_SCRIPT.replace(b"__ARCH__", CURRENT_ARCH.encode("ascii"))
@@ -143,6 +264,114 @@ def get_target_port():
             except Exception:
                 pass
         return _current_port
+
+# ---------------------------------------------------------------------------
+# fnOS 开放 API 桥接（文件选择器 / 打开文件管理器）
+# ---------------------------------------------------------------------------
+_TRIM_SOCK = "/var/run/trim_open_gateway_apiscope.socket"
+
+def _call_trim_api(req_name, data=None):
+    """调用 fnOS 后端开放 API，返回响应中的 data 或 None"""
+    api_token = os.environ.get("TRIM_API_TOKEN", "")
+    if not api_token:
+        return None
+    body = json.dumps({
+        "req": req_name,
+        "appName": "transmission",
+        "data": data or {},
+    })
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(5)
+        sock.connect(_TRIM_SOCK)
+        req = (
+            "POST /api/v1/trimapp HTTP/1.1\r\n"
+            "Host: localhost\r\n"
+            "Authorization: Bearer %s\r\n"
+            "Content-Type: application/json\r\n"
+            "Content-Length: %d\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "%s"
+        ) % (api_token, len(body), body)
+        sock.sendall(req.encode())
+        resp = b""
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            resp += chunk
+        sock.close()
+        header_end = resp.find(b"\r\n\r\n")
+        if header_end < 0:
+            return None
+        resp_body = resp[header_end + 4:]
+        result = json.loads(resp_body)
+        if result.get("code") == 0:
+            return result.get("data")
+        return None
+    except Exception:
+        return None
+
+
+def _read_config_download_dir():
+    """从 settings.json 读取 download-dir"""
+    try:
+        if CONFIG_PATH and os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, 'r') as f:
+                cfg = json.load(f)
+            return cfg.get("download-dir", "")
+    except Exception:
+        pass
+    return ""
+
+
+def _set_config_download_dir(new_path):
+    """更新 settings.json 中的 download-dir（持久化，重启后仍生效）"""
+    try:
+        if CONFIG_PATH and os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, 'r') as f:
+                cfg = json.load(f)
+            cfg["download-dir"] = new_path
+            with open(CONFIG_PATH, 'w') as f:
+                json.dump(cfg, f, indent=4, ensure_ascii=False)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _call_transmission_rpc(method, arguments):
+    """调用 Transmission RPC（JSON-RPC），自动处理 X-Transmission-Session-Id。
+    返回 (ok, response_dict)。"""
+    port = get_target_port()
+    try:
+        # 先 GET 获取 session id
+        conn = HTTPConnection(TARGET_HOST, port, timeout=15)
+        conn.request("GET", "/transmission/rpc")
+        resp = conn.getresponse()
+        resp.read()
+        session_id = resp.getheader("X-Transmission-Session-Id", "")
+        conn.close()
+
+        payload = json.dumps({"method": method, "arguments": arguments or {}})
+        headers = {
+            "Content-Type": "application/json",
+            "X-Transmission-Session-Id": session_id,
+        }
+        conn = HTTPConnection(TARGET_HOST, port, timeout=15)
+        conn.request("POST", "/transmission/rpc", body=payload, headers=headers)
+        resp = conn.getresponse()
+        data = resp.read()
+        status = resp.status
+        conn.close()
+        try:
+            return status == 200, json.loads(data)
+        except Exception:
+            return status == 200, None
+    except Exception:
+        return False, None
+
 
 if os.path.exists(SOCK_PATH):
     os.unlink(SOCK_PATH)
@@ -459,6 +688,73 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                     params[p] = ""
         is_debug = params.get("debug") == "1"
 
+        if path == "/api/download-path":
+            try:
+                save_path = _read_config_download_dir()
+                result = {"success": True, "path": save_path, "displayPath": save_path, "hasACL": True}
+                if save_path:
+                    # 路径转换：得到语义路径用于显示
+                    try:
+                        display = _call_trim_api("trim.file.convertPath", {
+                            "path": [save_path],
+                            "language": "zh-CN",
+                        })
+                        if display and display.get("status") == 0:
+                            sem = display.get("result", [{}])[0].get("semanticPath", "")
+                            if sem:
+                                result["displayPath"] = sem
+                    except Exception:
+                        pass
+                    # 权限检查
+                    try:
+                        uid = self.headers.get("X-Trim-Userid", "")
+                        if uid:
+                            acl = _call_trim_api("trim.file.checkUserACL", {
+                                "uid": int(uid),
+                                "path": save_path,
+                            })
+                            if acl and isinstance(acl, list) and len(acl) > 0:
+                                item = acl[0]
+                                result["hasACL"] = bool(item.get("readable") or item.get("writable"))
+                    except Exception:
+                        pass
+                self._send_json(200, result)
+            except Exception as e:
+                self._send_json(500, {"success": False, "error": str(e)})
+            return True
+
+        if path == "/api/set-save-path":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                if length <= 0:
+                    self._send_json(400, {"success": False, "error": "缺少请求体"})
+                    return True
+                req_body = self.rfile.read(length).decode("utf-8")
+                data = json.loads(req_body)
+                new_path = (data.get("path") or "").strip()
+                if not new_path:
+                    self._send_json(400, {"success": False, "error": "路径不能为空"})
+                    return True
+                if not os.path.isdir(new_path):
+                    try:
+                        os.makedirs(new_path, exist_ok=True)
+                    except Exception:
+                        self._send_json(400, {"success": False, "error": "目录不存在且无法创建: %s" % new_path})
+                        return True
+                # 持久化到 settings.json
+                saved = _set_config_download_dir(new_path)
+                # 通过 Transmission RPC 实时生效（无需重启）
+                ok, _resp = _call_transmission_rpc("session-set", {"download-dir": new_path})
+                self._send_json(200, {
+                    "success": True,
+                    "path": new_path,
+                    "applied": ok,
+                    "note": "" if ok else "配置已保存，但实时应用失败，可能需重启应用生效",
+                })
+            except Exception as e:
+                self._send_json(500, {"success": False, "error": str(e)})
+            return True
+
         if path == "/api/update/check":
             try:
                 global _cached_version
@@ -553,7 +849,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
 
         path = self._strip_prefix()
 
-        if path.startswith("/api/update/"):
+        if path.startswith("/api/"):
             if self._handle_api(path):
                 return
 

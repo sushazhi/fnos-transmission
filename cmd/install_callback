@@ -22,9 +22,9 @@ if [ -d "$LIB_DIR" ]; then
 fi
 
 # 获取用户配置（从向导或环境变量）
-# 向导变量名: wizard_rpc_username, wizard_rpc_password
-RPC_USERNAME="${wizard_rpc_username:-${RPC_USERNAME:-admin}}"
-RPC_PASSWORD="${wizard_rpc_password:-${RPC_PASSWORD:-password}}"
+# 重装/升级时留空用户名和密码将保留已有配置
+RPC_USERNAME="${wizard_rpc_username:-}"
+RPC_PASSWORD="${wizard_rpc_password:-}"
 
 # 获取下载目录配置（从向导或环境变量）
 SAVE_PATH="${wizard_save_path:-/vol1/@appshare/transmission/downloads/}"
@@ -33,7 +33,6 @@ SAVE_PATH="${wizard_save_path:-/vol1/@appshare/transmission/downloads/}"
 WEBUI_PORT="9090"
 
 echo "正在应用配置..."
-echo "用户名: ${RPC_USERNAME}"
 echo "下载目录: ${SAVE_PATH}"
 
 # 创建配置目录
@@ -52,19 +51,35 @@ if [ -n "$TRIM_PKGTMP" ]; then
     chmod 777 "$TRIM_PKGTMP" 2>/dev/null || true
 fi
 
+# 确保下载目录存在（@appshare 下自动创建）
+if [ -d "$SAVE_PATH" ]; then
+    chown -R package:package "$SAVE_PATH" 2>/dev/null || true
+elif echo "$SAVE_PATH" | grep -qE '^/vol[0-9]+/@appshare/'; then
+    mkdir -p "$SAVE_PATH" 2>/dev/null && chown -R package:package "$SAVE_PATH" 2>/dev/null || echo "警告：无法自动创建下载目录（${SAVE_PATH}），可能因权限不足" > "$TRIM_TEMP_LOGFILE"
+fi
+
 # 检查配置文件是否已存在（用户卸载时可能保留了配置）
 if [ -f "$CONFIG_DIR" ]; then
-    echo "检测到已有配置文件，保留其他设置并更新用户名、密码、下载目录..."
+    echo "检测到已有配置文件，保留原有设置..."
 
-    # 使用 sed 更新 JSON 配置文件中的指定字段
-    # 更新 download-dir
+    # 用户名：向导留空则保留已有
+    if [ -n "$RPC_USERNAME" ]; then
+        sed -i "s|\"rpc-username\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"rpc-username\": \"${RPC_USERNAME}\"|g" "$CONFIG_DIR"
+        echo "已更新用户名: ${RPC_USERNAME}"
+    else
+        echo "用户名留空，保留已有用户名"
+    fi
+
+    # 密码：向导留空则保留已有
+    if [ -n "$RPC_PASSWORD" ]; then
+        sed -i "s|\"rpc-password\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"rpc-password\": \"${RPC_PASSWORD}\"|g" "$CONFIG_DIR"
+        echo "已更新密码"
+    else
+        echo "密码留空，保留已有密码"
+    fi
+
+    # 更新下载目录
     sed -i "s|\"download-dir\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"download-dir\": \"${SAVE_PATH}\"|g" "$CONFIG_DIR"
-
-    # 更新 rpc-username
-    sed -i "s|\"rpc-username\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"rpc-username\": \"${RPC_USERNAME}\"|g" "$CONFIG_DIR"
-
-    # 更新 rpc-password
-    sed -i "s|\"rpc-password\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"rpc-password\": \"${RPC_PASSWORD}\"|g" "$CONFIG_DIR"
 
     # 网关模式：禁用RPC认证（网关已认证）、绑定127.0.0.1
     sed -i 's|"rpc-authentication-required"[[:space:]]*:[[:space:]]*[^,]*|"rpc-authentication-required": false|g' "$CONFIG_DIR"
@@ -78,13 +93,20 @@ if [ -f "$CONFIG_DIR" ]; then
     if grep -q '"incomplete-dir-enabled"' "$CONFIG_DIR"; then
         sed -i 's|"incomplete-dir-enabled"[[:space:]]*:[[:space:]]*[^,]*|"incomplete-dir-enabled": false|g' "$CONFIG_DIR"
     else
-        # 如果不存在该字段，在 download-dir 后面添加
         sed -i "s|\"download-dir\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"download-dir\": \"${SAVE_PATH}\",\n    \"incomplete-dir-enabled\": false|g" "$CONFIG_DIR"
     fi
 
     echo "配置已更新（保留原有其他设置）"
 else
     echo "创建新配置文件..."
+
+    # 首次安装：用户未设置时使用默认凭证
+    if [ -z "$RPC_USERNAME" ]; then
+        RPC_USERNAME="admin"
+    fi
+    if [ -z "$RPC_PASSWORD" ]; then
+        RPC_PASSWORD="password"
+    fi
 
     # 生成配置文件（使用 cat 配合 EOF 注入变量值）
     cat > "$CONFIG_DIR" << EOF
@@ -115,6 +137,9 @@ EOF
     echo "新配置文件已创建"
 fi
 
+# 确保配置目录权限正确
+chown -R package:package "$DATA_DIR" 2>/dev/null || true
+
 echo ""
 echo "=================================="
 echo "Transmission 安装完成"
@@ -122,7 +147,6 @@ echo "=================================="
 echo ""
 echo "网关模式: /app/transmission -> 127.0.0.1:${WEBUI_PORT}"
 echo ""
-echo "用户名: ${RPC_USERNAME}"
 echo "下载目录: ${SAVE_PATH}"
 echo "数据目录: $DATA_DIR"
 echo "配置文件: $CONFIG_DIR"

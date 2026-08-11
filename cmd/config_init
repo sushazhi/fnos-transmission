@@ -17,12 +17,41 @@ chown -R package:package "$TRIM_PKGVAR" 2>/dev/null || true
 
 # 检查是否已有配置
 CONFIG_DIR="${TRIM_PKGVAR}/settings.json"
+CURRENT_USERNAME="admin"
+CURRENT_SAVE_PATH="/vol1/@appshare/transmission/downloads/"
+
 if [ -f "$CONFIG_DIR" ]; then
     echo "配置文件已存在: $CONFIG_DIR"
     echo "使用现有配置"
+
+    # 读取当前用户名
+    CURRENT_USERNAME=$(python3 -c "
+import json,sys
+try:
+    c=json.load(open('$CONFIG_DIR'))
+    print(c.get('rpc-username','') or 'admin')
+except Exception:
+    print('admin')
+" 2>/dev/null)
+    [ -z "$CURRENT_USERNAME" ] && CURRENT_USERNAME="admin"
+
+    # 读取当前下载目录
+    CURRENT_SAVE_PATH=$(python3 -c "
+import json,sys
+try:
+    c=json.load(open('$CONFIG_DIR'))
+    print(c.get('download-dir','') or '/vol1/@appshare/transmission/downloads/')
+except Exception:
+    print('/vol1/@appshare/transmission/downloads/')
+" 2>/dev/null)
+    [ -z "$CURRENT_SAVE_PATH" ] && CURRENT_SAVE_PATH="/vol1/@appshare/transmission/downloads/"
 else
     echo "未找到现有配置"
 fi
 
+echo "wizard_rpc_username=${CURRENT_USERNAME}"
+echo "wizard_save_path=${CURRENT_SAVE_PATH}"
+
+echo "当前配置: 用户名=${CURRENT_USERNAME}, 下载目录=${CURRENT_SAVE_PATH}"
 echo "Transmission 配置初始化完成"
 exit 0

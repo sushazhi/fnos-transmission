@@ -82,6 +82,30 @@ $FNPACK_URL = "https://static2.fnnas.com/fnpack/fnpack-1.2.3-windows-amd64"
 $GITHUB_RELEASES_URL = "https://github.com/sushazhi/fnos-transmission/releases/download"
 $WEBUI_BASE = "https://ghfast.top/https://github.com/sushazhi/transmission-web/releases/download"
 
+# 下载代理配置（参考 qbittorrent build.ps1）
+$MAIN_PROXY = "https://gh-proxy.com/"
+$BINARY_PROXY = "https://ghfast.top/"
+
+# 通用代理下载：依次尝试 MAIN_PROXY -> BINARY_PROXY -> 直连（使用 curl.exe，避免代理对 Invoke-WebRequest 返回 403）
+function Invoke-ProxyDownload {
+    param([string]$Url, [string]$OutFile, [string]$Description)
+    $urls = @(
+        $MAIN_PROXY + $Url,
+        $BINARY_PROXY + $Url,
+        $Url
+    )
+    foreach ($u in $urls) {
+        if (Test-Path $OutFile) { Remove-Item $OutFile -Force -ErrorAction SilentlyContinue }
+        & curl.exe -L -f -o $OutFile -s --connect-timeout 15 --max-time 180 --retry 2 --retry-delay 3 $u 2>$null
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $OutFile) -and (Get-Item $OutFile).Length -gt 0) {
+            return $true
+        }
+    }
+    if (Test-Path $OutFile) { Remove-Item $OutFile -Force -ErrorAction SilentlyContinue }
+    Write-Host "  ERROR: Failed to download $Description (all proxies failed)" -ForegroundColor Red
+    return $false
+}
+
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  Transmission for fnOS - Local Build" -ForegroundColor Cyan
 Write-Host "  Version: $APP_VERSION" -ForegroundColor Gray
@@ -102,7 +126,7 @@ Copy-Item "$PROJECT_DIR\cmd\*" "$BUILD_DIR\cmd\" -Recurse -Force
 Copy-Item "$PROJECT_DIR\config\*" "$BUILD_DIR\config\" -Recurse -Force
 Copy-Item "$PROJECT_DIR\wizard\*" "$BUILD_DIR\wizard\" -Recurse -Force
 Copy-Item "$PROJECT_DIR\manifest" "$BUILD_DIR\" -Force
-@("LICENSE", "ICON.PNG", "ICON_256.PNG") | ForEach-Object {
+@("ICON.PNG", "ICON_256.PNG") | ForEach-Object {
     if (Test-Path "$PROJECT_DIR\$_") {
         Copy-Item "$PROJECT_DIR\$_" "$BUILD_DIR\" -Force
     }
@@ -134,15 +158,13 @@ if ((Test-Path $daemonCache) -or (Test-Path $daemonCacheLegacy)) {
     )
     $downloaded = $false
     foreach ($url in $daemonUrls) {
-        try {
-            Invoke-WebRequest -Uri $url -OutFile $daemonCache -UseBasicParsing
+        if (Invoke-ProxyDownload -Url $url -OutFile $daemonCache -Description "transmission-daemon-$targetVersion-$ARCH") {
             Copy-Item $daemonCache $daemonTarget -Force
-            Write-Host "  Downloaded ($url)" -ForegroundColor Green
+            Write-Host "  Downloaded (via proxy) -> $url" -ForegroundColor Green
             $downloaded = $true
             break
-        } catch {
-            Write-Host "  Not found: $url" -ForegroundColor DarkGray
         }
+        Write-Host "  Not found: $url" -ForegroundColor DarkGray
     }
     if (-not $downloaded) {
         Write-Host "  ERROR: Failed to download transmission-daemon for $ARCH from release v$targetVersion" -ForegroundColor Red
@@ -170,15 +192,13 @@ if ((Test-Path $libCache) -or (Test-Path $libCacheLegacy)) {
     )
     $libDownloaded = $false
     foreach ($url in $libUrls) {
-        try {
-            Invoke-WebRequest -Uri $url -OutFile $libCache -UseBasicParsing
+        if (Invoke-ProxyDownload -Url $url -OutFile $libCache -Description "libminiupnpc.so.17-$targetVersion-$ARCH") {
             Copy-Item $libCache $libTarget -Force
-            Write-Host "  Downloaded ($url)" -ForegroundColor Green
+            Write-Host "  Downloaded (via proxy) -> $url" -ForegroundColor Green
             $libDownloaded = $true
             break
-        } catch {
-            Write-Host "  Not found: $url" -ForegroundColor DarkGray
         }
+        Write-Host "  Not found: $url" -ForegroundColor DarkGray
     }
     if (-not $libDownloaded) {
         Write-Host "  Warning: libminiupnpc.so.17 not available for $ARCH in release v$targetVersion" -ForegroundColor Yellow
