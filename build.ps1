@@ -230,7 +230,12 @@ if ((Test-Path $webuiCache)) {
 
 # Extract WebUI
 Write-Host "  Extracting..." -ForegroundColor Gray
-Expand-Archive -Path $webuiCache -DestinationPath "$BUILD_DIR\app\ui" -Force
+# 使用 tar 解压（Windows 10+ 内置），比 Expand-Archive 更可靠（避免根目录文件缺失的问题）
+& tar -xf $webuiCache -C "$BUILD_DIR\app\ui"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  tar 解压失败，回退到 Expand-Archive..." -ForegroundColor Yellow
+    Expand-Archive -Path $webuiCache -DestinationPath "$BUILD_DIR\app\ui" -Force
+}
 if (Test-Path "$BUILD_DIR\app\ui\transmission") {
     Get-ChildItem "$BUILD_DIR\app\ui\transmission" | Move-Item -Destination "$BUILD_DIR\app\ui\" -Force
     Remove-Item "$BUILD_DIR\app\ui\transmission" -Recurse -Force

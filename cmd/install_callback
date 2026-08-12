@@ -100,12 +100,17 @@ if [ -f "$CONFIG_DIR" ]; then
 else
     echo "创建新配置文件..."
 
-    # 首次安装：用户未设置时使用默认凭证
+    # 首次安装：SSO 网关免密模式，未设置时自动生成随机内部凭证（不使用公开默认密码）
     if [ -z "$RPC_USERNAME" ]; then
-        RPC_USERNAME="admin"
+        RPC_USERNAME="transmission"
     fi
     if [ -z "$RPC_PASSWORD" ]; then
-        RPC_PASSWORD="password"
+        RPC_PASSWORD=$(head -c 24 /dev/urandom 2>/dev/null | base64 2>/dev/null | tr -dc 'a-zA-Z0-9' | head -c 24)
+        if [ -z "$RPC_PASSWORD" ]; then
+            RPC_PASSWORD="${TRIM_API_TOKEN:-}${RANDOM}${RANDOM}${RANDOM}"
+            RPC_PASSWORD=$(echo "$RPC_PASSWORD" | tr -dc 'a-zA-Z0-9' | head -c 24)
+        fi
+        echo "已生成随机内部凭证（SSO 网关免密）"
     fi
 
     # 生成配置文件（使用 cat 配合 EOF 注入变量值）

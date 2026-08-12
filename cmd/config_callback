@@ -41,7 +41,7 @@ mkdir -p "$DATA_DIR"
 chown -R package:package "$DATA_DIR" 2>/dev/null || true
 
 # 获取用户配置（从向导或环境变量）
-RPC_USERNAME="${wizard_rpc_username:-${RPC_USERNAME:-admin}}"
+RPC_USERNAME="${wizard_rpc_username:-${RPC_USERNAME:-transmission}}"
 RPC_PASSWORD="${wizard_rpc_password:-}"
 SAVE_PATH="${wizard_save_path:-}"
 
@@ -109,9 +109,13 @@ else
     if [ -z "$SAVE_PATH" ]; then
         SAVE_PATH="/vol1/@appshare/transmission/downloads/"
     fi
-    # 默认密码（首次创建时若未设置）
+    # 默认密码（首次创建时若未设置，自动生成随机内部凭证，不使用公开默认密码）
     if [ -z "$RPC_PASSWORD" ]; then
-        RPC_PASSWORD="password"
+        RPC_PASSWORD=$(head -c 24 /dev/urandom 2>/dev/null | base64 2>/dev/null | tr -dc 'a-zA-Z0-9' | head -c 24)
+        if [ -z "$RPC_PASSWORD" ]; then
+            RPC_PASSWORD="${TRIM_API_TOKEN:-}${RANDOM}${RANDOM}${RANDOM}"
+            RPC_PASSWORD=$(echo "$RPC_PASSWORD" | tr -dc 'a-zA-Z0-9' | head -c 24)
+        fi
     fi
 
     cat > "$CONFIG_DIR" << EOF

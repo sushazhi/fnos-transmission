@@ -17,7 +17,7 @@ chown -R package:package "$TRIM_PKGVAR" 2>/dev/null || true
 
 # 检查是否已有配置
 CONFIG_DIR="${TRIM_PKGVAR}/settings.json"
-CURRENT_USERNAME="admin"
+CURRENT_USERNAME="transmission"
 CURRENT_SAVE_PATH="/vol1/@appshare/transmission/downloads/"
 
 if [ -f "$CONFIG_DIR" ]; then
@@ -33,7 +33,7 @@ try:
 except Exception:
     print('admin')
 " 2>/dev/null)
-    [ -z "$CURRENT_USERNAME" ] && CURRENT_USERNAME="admin"
+    [ -z "$CURRENT_USERNAME" ] && CURRENT_USERNAME="transmission"
 
     # 读取当前下载目录
     CURRENT_SAVE_PATH=$(python3 -c "
