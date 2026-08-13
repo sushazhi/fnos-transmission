@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import http.server, socket, sys, os, signal, re, time, threading, gzip, zlib, select, json, subprocess
 import platform as _platform
+from concurrent.futures import ThreadPoolExecutor
 from http.client import HTTPConnection
 from urllib.parse import urlparse, urlunparse
 
@@ -1054,14 +1055,17 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
 class ThreadedUnixHTTPServer(http.server.HTTPServer):
     address_family = socket.AF_UNIX
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # 线程池限制并发上限，避免每请求一线程导致线程无限增长、内存飙升
+        self._executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="proxy")
+
     def server_bind(self):
         self.socket.bind(self.server_address)
         os.chmod(self.server_address, 0o666)
 
     def process_request(self, request, client_address):
-        t = threading.Thread(target=self._handle, args=(request, client_address))
-        t.daemon = True
-        t.start()
+        self._executor.submit(self._handle, request, client_address)
 
     def _handle(self, request, client_address):
         try:
@@ -1071,8 +1075,14 @@ class ThreadedUnixHTTPServer(http.server.HTTPServer):
         finally:
             self.shutdown_request(request)
 
+    def server_close(self):
+        self._executor.shutdown(wait=False)
+        super().server_close()
+
 
 def cleanup(signum, frame):
+    if hasattr(server, '_executor'):
+        server._executor.shutdown(wait=False)
     server.server_close()
     if os.path.exists(SOCK_PATH):
         os.unlink(SOCK_PATH)

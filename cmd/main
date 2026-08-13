@@ -48,7 +48,24 @@ read_transmission_port() {
     fi
 }
 
+kill_orphan_proxies() {
+    # 清理所有残留的 gateway-proxy 进程（防止历史孤儿进程堆积占用内存）
+    # 匹配本应用专用的 GATEWAY_SOCK，避免误杀其他应用
+    local orphans
+    orphans=$(pgrep -f "gateway-proxy.py.*${GATEWAY_SOCK}" 2>/dev/null)
+    for pid in $orphans; do
+        # 跳过本次要启动的 PID 文件记录
+        if [ -f "$PROXY_PID_FILE" ] && [ "$pid" = "$(cat "$PROXY_PID_FILE" 2>/dev/null)" ]; then
+            continue
+        fi
+        kill -9 "$pid" 2>/dev/null && echo "清理残留代理进程 PID: $pid"
+    done
+}
+
 start_proxy() {
+    # 先清理所有残留的同名代理进程，再启动新实例，避免多个进程堆积
+    kill_orphan_proxies
+
     if [ -f "$PROXY_PID_FILE" ]; then
         local PROXY_PID=$(cat "$PROXY_PID_FILE")
         if kill -0 "$PROXY_PID" 2>/dev/null; then
@@ -98,6 +115,8 @@ stop_proxy() {
         fi
         rm -f "$PROXY_PID_FILE"
     fi
+    # 兜底：清理所有残留的同名代理进程，确保不留孤儿
+    pkill -f "gateway-proxy.py.*${GATEWAY_SOCK}" 2>/dev/null || true
     rm -f "$GATEWAY_SOCK"
     echo "proxy stopped"
 }

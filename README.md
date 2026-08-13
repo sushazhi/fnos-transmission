@@ -3,8 +3,8 @@
 🌐 **语言/Language**
 - [简体中文](README.md) | [English](README_EN.md)
 
-[![Transmission Version](https://img.shields.io/badge/Transmission-4.1.1-blue?style=flat-square)](https://github.com/transmission/transmission/releases)
-[![WebUI Version](https://img.shields.io/badge/WebUI-0.0.9-green?style=flat-square)](https://github.com/jianxcao/transmission-web/releases)
+[![Transmission Version](https://img.shields.io/badge/Transmission-4.1.3-blue?style=flat-square)](https://github.com/transmission/transmission/releases)
+[![WebUI Version](https://img.shields.io/badge/WebUI-0.1.0-green?style=flat-square)](https://github.com/jianxcao/transmission-web/releases)
 [![Platform](https://img.shields.io/badge/Platform-fnOS-green?style=flat-square)](https://www.fnnas.com/)
 [![License](https://img.shields.io/badge/License-GPL--2.0-blue?style=flat-square)](https://www.gnu.org/licenses/gpl-2.0.html)
 
@@ -37,29 +37,52 @@
 
 ## 🔨 本地构建
 
+统一使用跨平台 Python 构建脚本 `build.py`，**在 Windows / Linux / macOS 上命令完全一致**，仅需安装 Python 3.8+（项目本身即依赖 Python，无额外负担）。
+
 ### 环境要求
 
 | 组件 | 要求 |
 |------|------|
-| transmission-daemon | 需从 [builds/4.1.1/](builds/4.1.1/) 获取（对应架构的编译产物） |
+| Python | 3.8+（Windows / Linux / macOS 通用） |
+| transmission-daemon | 构建时自动从 [GitHub Releases](https://github.com/sushazhi/fnos-transmission/releases) 获取对应架构的编译产物 |
 
-### Windows 构建（推荐）
+### 一键构建
 
-**PowerShell 一键构建：**
-
-```powershell
+```bash
 # 进入项目目录
 cd fnos-transmission
 
-# 运行构建（默认版本 4.1.1，架构 arm64）
-.\build.ps1
+# 运行构建（默认版本，默认架构 arm64）
+python build.py
 
-# 指定版本构建
-.\build.ps1 -Version "4.1.1"
+# 指定应用版本
+python build.py --app-version 4.1.3.2.1
 
 # 指定架构构建（amd64）
-.\build.ps1 -Arch amd64
+python build.py --arch amd64
+
+# 指定 transmission-daemon 版本
+python build.py --transmission-version 4.1.3
+
+# 列出可用的 transmission 版本
+python build.py --list-versions
 ```
+
+**参数说明**：
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--app-version, -v` | 应用版本号（覆盖 manifest） | 读取 manifest |
+| `--transmission-version, -t` | 指定 transmission-daemon 版本 | 应用版本前 3 段 |
+| `--arch, -a` | 目标架构 `arm64` / `amd64` | `arm64` |
+| `--list-versions` | 列出可用的 transmission 版本 | — |
+
+**构建特性**：
+- **跨平台**：一份脚本在 Windows / Linux / macOS 通用，自动检测平台并选择对应的官方 `fnpack` 构建工具
+- **零外部依赖**：下载用内置 `urllib`，解压用内置 `zipfile` / `tarfile`，无需安装 `curl` / `unzip` / `tar`
+- 自动从 GitHub Releases 获取 `transmission-daemon` 与 `libminiupnpc.so.17`（含架构后缀 / 版本后缀 / 裸文件名多级回退）
+- 自动获取最新 `transmission-web` WebUI 并注入更新检测脚本
+- 构建产物输出到项目根目录：`transmission-<版本>-<架构>.fpk`
 
 ### CI 构建
 
@@ -73,8 +96,8 @@ GitHub Actions 会自动为 **arm64** 和 **amd64** 两种架构构建，产物�
 
 | 文件 | 说明 |
 |------|------|
-| `transmission-4.1.1-arm64.fpk` | fnOS 安装包（ARM64） |
-| `transmission-4.1.1-amd64.fpk` | fnOS 安装包（amd64） |
+| `transmission-4.1.3.2.1-arm64.fpk` | fnOS 安装包（ARM64） |
+| `transmission-4.1.3.2.1-amd64.fpk` | fnOS 安装包（amd64） |
 | `.local-build/` | 构建缓存目录（可删除） |
 
 ---
@@ -142,6 +165,7 @@ fnos-transmission/
 │   ├── install             # 安装向导
 │   ├── upgrade             # 升级向导
 │   └── uninstall           # 卸载向导
+├── build.py                # 跨平台构建脚本（Windows/Linux/macOS）
 ├── LICENSE                 # 项目许可证
 └── manifest                # 应用元数据
 ```
@@ -158,8 +182,8 @@ fnos-transmission/
 
 | 项目 | 版本 | 用途 | 许可证 |
 |------|------|------|--------|
-| [Transmission](https://github.com/transmission/transmission) | 4.1.1 | BitTorrent 客户端核心 | [GPL-2.0](https://www.gnu.org/licenses/gpl-2.0.html) |
-| [transmission-web](https://github.com/jianxcao/transmission-web) | 0.0.9 | WebUI 界面 | [MIT](https://opensource.org/licenses/MIT) |
+| [Transmission](https://github.com/transmission/transmission) | 4.1.3 | BitTorrent 客户端核心 | [GPL-2.0](https://www.gnu.org/licenses/gpl-2.0.html) |
+| [transmission-web](https://github.com/jianxcao/transmission-web) | 0.1.0 | WebUI 界面 | [MIT](https://opensource.org/licenses/MIT) |
 
 ---
 
@@ -178,6 +202,9 @@ fnos-transmission/
 ---
 
 ## 📝 更新日志
+
+### v4.1.3.2.1
+- ✨ 新增打开/选择下载目录（fnOS文件选择器）
 
 ### v4.1.1
 - ✨ 升级至 Transmission 4.1.1
