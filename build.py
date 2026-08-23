@@ -38,8 +38,15 @@ MAIN_PROXY = "https://gh-proxy.com/"
 BINARY_PROXY = "https://ghfast.top/"
 
 
+_ANSI_COLORS = {"cyan": "96", "green": "92", "yellow": "93", "red": "91", "gray": "90"}
+
 def log(msg, color="cyan"):
-    sys.stdout.write(msg + "\n")
+    # TTY 下输出 ANSI 颜色，重定向/管道下输出纯文本
+    code = _ANSI_COLORS.get(color, "")
+    if code and sys.stdout.isatty():
+        sys.stdout.write(f"\033[{code}m{msg}\033[0m\n")
+    else:
+        sys.stdout.write(msg + "\n")
     sys.stdout.flush()
 
 
@@ -66,11 +73,11 @@ def get_platform_arch():
     return "amd64"
 
 
-def get_fnpack_url(arch):
-    """根据平台和架构返回 fnpack 下载地址，覆盖 Windows/Linux/macOS。
+def get_fnpack_url():
+    """根据开发机平台返回 fnpack 下载地址，覆盖 Windows/Linux/macOS。
 
-    - 构建工具 fnpack 必须用【当前开发机】的平台，而非目标应用平台
-    - 因此这里用 get_platform() + get_platform_arch() 自动检测开发机
+    注意：构建工具 fnpack 必须用【当前开发机】的平台，而非目标应用平台，
+    因此这里用 get_platform() + get_platform_arch() 自动检测开发机。
     """
     plat = get_platform()
     if plat == "windows":
@@ -207,6 +214,8 @@ def main():
 
     # [1/6] 构建目录
     log("[1/6] Setting up build directory...", "yellow")
+    # 清空旧 app 目录，避免切换 ui/web -> ui 后残留旧 ui/web 子目录
+    shutil.rmtree(os.path.join(BUILD_DIR, "app"), ignore_errors=True)
     for d in ["app/bin", "app/lib", "app/ui", "cmd", "config", "wizard"]:
         os.makedirs(os.path.join(BUILD_DIR, d), exist_ok=True)
     log("  Build directory ready", "green")
@@ -337,7 +346,7 @@ def main():
 
     # [6/6] 构建 fpk
     log("[6/6] Building package...", "yellow")
-    fnpack_url = get_fnpack_url(arch)
+    fnpack_url = get_fnpack_url()
     fnpack_name = fnpack_url.rsplit("/", 1)[-1]
     fnpack_path = os.path.join(BUILD_DIR, fnpack_name)
     if os.path.exists(fnpack_path) and os.path.getsize(fnpack_path) > 0:

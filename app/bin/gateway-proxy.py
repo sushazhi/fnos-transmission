@@ -221,7 +221,8 @@ def rewrite_html(data, prefix):
     data = re.sub(rb'<head\b[^>]*>', lambda m: m.group(0) + INJECT_SCRIPT, data, count=1)
     p = prefix.encode()
     data = re.sub(rb'<base\s+href=["\']/', rb'<base href="' + p + rb'/', data, count=1)
-    data = re.sub(rb'(src|href|action)=([\'"])/', rb'\1=\2' + p + rb'/', data)
+    # 排除协议相对 URL（//cdn...），避免被错误加上网关前缀
+    data = re.sub(rb'(src|href|action)=([\'"])/(?!/)', rb'\1=\2' + p + rb'/', data)
     return data
 
 def rewrite_js(data, prefix):
@@ -282,6 +283,7 @@ def _call_trim_api(req_name, data=None):
         "data": data or {},
     })
     try:
+        body_bytes = body.encode("utf-8")
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(5)
         sock.connect(_TRIM_SOCK)
@@ -293,9 +295,8 @@ def _call_trim_api(req_name, data=None):
             "Content-Length: %d\r\n"
             "Connection: close\r\n"
             "\r\n"
-            "%s"
-        ) % (api_token, len(body), body)
-        sock.sendall(req.encode())
+        ) % (api_token, len(body_bytes))
+        sock.sendall(req.encode() + body_bytes)
         resp = b""
         while True:
             chunk = sock.recv(4096)
@@ -428,13 +429,18 @@ def _fetch_latest_version():
     }
 
 def _get_current_version():
-    try:
-        with open(CONFIG_PATH.replace("settings.json", "../manifest"), 'r') as f:
-            for line in f:
-                if line.strip().startswith("version"):
-                    return line.split("=", 1)[1].strip()
-    except Exception:
-        pass
+    # manifest 位于 ${TRIM_APPDEST}/manifest，而非 settings.json 同级目录
+    appdest = os.environ.get("TRIM_APPDEST", "")
+    if appdest:
+        manifest_path = os.path.join(appdest, "manifest")
+        try:
+            if os.path.exists(manifest_path):
+                with open(manifest_path, 'r') as f:
+                    for line in f:
+                        if line.strip().startswith("version"):
+                            return line.split("=", 1)[1].strip()
+        except Exception:
+            pass
     v = os.environ.get("TRIM_APPVER", "")
     return v if v else "0.0.0"
 
@@ -449,7 +455,7 @@ def _validate_fpk(path):
     except Exception as e:
         return False, str(e)
 
-def _download_fpk(url, dest, status, max_size=5*1024*1024):
+def _download_fpk(url, dest, status, max_size=300*1024*1024):
     """
     下载 fpk 文件到 dest。
     参考 fnos-logmanager downloadFileWithProgress 模式。
@@ -628,11 +634,12 @@ def _perform_update(fpk_url):
         _update_status["updating"] = False
 
 
-def _tunnel_sock(client_sock, backend_sock):
+def _tunnel_sock(client_sock, backend_sock, on_close=None):
     try:
         while True:
-            r, _, _ = select.select([client_sock, backend_sock], [], [], 30)
+            r, _, _ = select.select([client_sock, backend_sock], [], [], 3600)
             if not r:
+                # 空闲超时（1小时）后断开，避免连接长期占用
                 break
             for s in r:
                 data = s.recv(65536)
@@ -645,6 +652,11 @@ def _tunnel_sock(client_sock, backend_sock):
     except Exception:
         pass
     finally:
+        if on_close:
+            try:
+                on_close()
+            except Exception:
+                pass
         try:
             client_sock.close()
         except Exception:
@@ -736,7 +748,26 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 if not new_path:
                     self._send_json(400, {"success": False, "error": "路径不能为空"})
                     return True
-                if not os.path.isdir(new_path):
+                if not new_path.startswith("/"):
+                    self._send_json(400, {"success": False, "error": "路径必须是绝对路径"})
+                    return True
+                if os.path.isdir(new_path):
+                    # 已存在：校验当前用户的写 ACL（X-Trim-* 头仅回环来源可信）
+                    uid = self.headers.get("X-Trim-Userid", "")
+                    if uid:
+                        try:
+                            acl = _call_trim_api("trim.file.checkUserACL", {
+                                "uid": int(uid),
+                                "path": new_path,
+                            })
+                            if acl and isinstance(acl, list) and len(acl) > 0:
+                                item = acl[0]
+                                if not item.get("writable"):
+                                    self._send_json(403, {"success": False, "error": "没有该目录的写权限: %s" % new_path})
+                                    return True
+                        except Exception:
+                            pass
+                else:
                     try:
                         os.makedirs(new_path, exist_ok=True)
                     except Exception:
@@ -1036,7 +1067,15 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
         backend.setblocking(True)
         client_raw.setblocking(True)
 
-        t = threading.Thread(target=_tunnel_sock, args=(client_raw, backend))
+        # 登记为 WebSocket 隧道，避免 shutdown_request 关闭写方向导致连接中断
+        server = self.server
+        server.mark_ws_tunnel(client_raw)
+
+        t = threading.Thread(
+            target=_tunnel_sock,
+            args=(client_raw, backend),
+            kwargs={"on_close": lambda: server.unmark_ws_tunnel(client_raw)},
+        )
         t.daemon = True
         t.start()
 
@@ -1059,6 +1098,9 @@ class ThreadedUnixHTTPServer(http.server.HTTPServer):
         super().__init__(*args, **kwargs)
         # 线程池限制并发上限，避免每请求一线程导致线程无限增长、内存飙升
         self._executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="proxy")
+        # 已升级为 WebSocket 的隧道连接 fd 集合：shutdown_request 时跳过关闭
+        self._ws_tunnels = set()
+        self._ws_tunnels_lock = threading.Lock()
 
     def server_bind(self):
         self.socket.bind(self.server_address)
@@ -1074,6 +1116,35 @@ class ThreadedUnixHTTPServer(http.server.HTTPServer):
             self.handle_error(request, client_address)
         finally:
             self.shutdown_request(request)
+
+    def mark_ws_tunnel(self, sock):
+        try:
+            fd = sock.fileno()
+        except Exception:
+            return
+        with self._ws_tunnels_lock:
+            self._ws_tunnels.add(fd)
+
+    def unmark_ws_tunnel(self, sock):
+        try:
+            fd = sock.fileno()
+        except Exception:
+            return
+        with self._ws_tunnels_lock:
+            self._ws_tunnels.discard(fd)
+
+    def shutdown_request(self, request):
+        try:
+            fd = request.fileno()
+        except Exception:
+            fd = -1
+        with self._ws_tunnels_lock:
+            is_ws = fd in self._ws_tunnels
+        if is_ws:
+            # WebSocket 隧道连接由隧道线程负责关闭，不执行 SHUT_WR，
+            # 否则写方向被关闭会导致 sendall 失败、连接立即断开
+            return
+        super().shutdown_request(request)
 
     def server_close(self):
         self._executor.shutdown(wait=False)

@@ -298,7 +298,8 @@ jobs:
             fi
           fi
 
-          # Ensure WebUI is available
+          # Ensure WebUI is available (flat under app/ui, no extra 'web' subdir)
+          mkdir -p app/ui
           if [ -d "/tmp/webui" ] && [ "$(ls -A /tmp/webui 2>/dev/null)" ]; then
             echo "WebUI already extracted, copying..."
             cp -r /tmp/webui/* app/ui/

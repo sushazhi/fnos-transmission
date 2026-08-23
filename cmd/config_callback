@@ -57,49 +57,65 @@ fi
 if [ -f "$CONFIG_DIR" ]; then
     echo "检测到已有配置文件，保留其他设置并更新用户名、密码、端口、下载目录..."
 
-    # 更新用户名（配置向导必填，始终更新）
-    sed -i "s|\"rpc-username\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"rpc-username\": \"${RPC_USERNAME}\"|g" "$CONFIG_DIR"
-
-    # 更新密码：仅当用户提供了新密码时才更新，否则保留现有密码
-    if [ -n "$RPC_PASSWORD" ]; then
-        sed -i "s|\"rpc-password\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"rpc-password\": \"${RPC_PASSWORD}\"|g" "$CONFIG_DIR"
-        echo "已更新密码"
-    else
-        echo "密码留空，保留当前密码"
-    fi
-
-    # 更新下载目录（如果提供了）
+    # 更新下载目录（如果提供了）前先确保目录存在（@appshare 下自动创建）
     if [ -n "$SAVE_PATH" ]; then
-        # 确保下载目录存在（@appshare 下自动创建）
         if [ -d "$SAVE_PATH" ]; then
             chown -R package:package "$SAVE_PATH" 2>/dev/null || true
         elif echo "$SAVE_PATH" | grep -qE '^/vol[0-9]+/@appshare/'; then
             mkdir -p "$SAVE_PATH" 2>/dev/null || true
             chown -R package:package "$SAVE_PATH" 2>/dev/null || true
         fi
-        sed -i "s|\"download-dir\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"download-dir\": \"${SAVE_PATH}\"|g" "$CONFIG_DIR"
-        echo "已更新下载目录: ${SAVE_PATH}"
     fi
 
-    # 更新 rpc-port，保留其他设置
-    if grep -q '"rpc-port"' "$CONFIG_DIR"; then
-        sed -i "s|\"rpc-port\"[[:space:]]*:[[:space:]]*[0-9]*|\"rpc-port\": ${WEBUI_PORT}|g" "$CONFIG_DIR"
-    else
-        sed -i '/"rpc-bind-address"/a\    "rpc-port": '"${WEBUI_PORT}"',' "$CONFIG_DIR"
+    # 用 python3 安全更新 JSON（避免 sed 注入特殊字符破坏配置/密码）
+    # 密码经环境变量传递，避免出现在命令行/进程列表中
+    RPC_PASSWORD_VAL="$RPC_PASSWORD" python3 - "$CONFIG_DIR" "$RPC_USERNAME" "$SAVE_PATH" "$WEBUI_PORT" << 'PYEOF'
+import json, os, sys
+config_path, username, save_path, webui_port = sys.argv[1:5]
+password = os.environ.get("RPC_PASSWORD_VAL", "")
+try:
+    with open(config_path, 'r', encoding='utf-8') as f:
+        cfg = json.load(f)
+except Exception as e:
+    sys.stderr.write("无法读取配置文件 %s: %s\n" % (config_path, e))
+    sys.exit(1)
+# 用户名：配置向导必填，始终更新
+if username:
+    cfg["rpc-username"] = username
+# 密码：仅当用户提供了新密码时才更新，否则保留现有密码
+if password:
+    cfg["rpc-password"] = password
+# 下载目录：提供了才更新
+if save_path:
+    cfg["download-dir"] = save_path
+# 端口
+cfg["rpc-port"] = int(webui_port)
+# 网关模式：禁用RPC认证、绑定127.0.0.1
+cfg["rpc-authentication-required"] = False
+cfg["rpc-bind-address"] = "127.0.0.1"
+try:
+    with open(config_path, 'w', encoding='utf-8') as f:
+        json.dump(cfg, f, indent=4, ensure_ascii=False)
+except Exception as e:
+    sys.stderr.write("无法写入配置文件 %s: %s\n" % (config_path, e))
+    sys.exit(1)
+PYEOF
+    if [ $? -ne 0 ]; then
+        echo "错误：更新配置文件失败" > "$TRIM_TEMP_LOGFILE"
+        exit 1
     fi
 
     # 校验结果
     PORT_RESULT=$(python3 -c "import json; print(json.load(open('$CONFIG_DIR')).get('rpc-port','?'))" 2>/dev/null)
     echo "配置端口: ${PORT_RESULT:-$WEBUI_PORT}"
-
-    # 网关模式：禁用RPC认证、绑定127.0.0.1
-    sed -i 's|"rpc-authentication-required"[[:space:]]*:[[:space:]]*[^,]*|"rpc-authentication-required": false|g' "$CONFIG_DIR"
-    if ! grep -q '"rpc-bind-address"' "$CONFIG_DIR"; then
-        sed -i '/"rpc-port"/a\    "rpc-bind-address": "127.0.0.1",' "$CONFIG_DIR"
+    if [ -n "$RPC_PASSWORD" ]; then
+        echo "已更新密码"
     else
-        sed -i 's|"rpc-bind-address"[[:space:]]*:[[:space:]]*"[^"]*"|"rpc-bind-address": "127.0.0.1"|g' "$CONFIG_DIR"
+        echo "密码留空，保留当前密码"
     fi
-
+    if [ -n "$SAVE_PATH" ]; then
+        echo "已更新下载目录: ${SAVE_PATH}"
+    fi
     echo "配置更新完成，已保留用户的其他设置"
 else
     echo "创建新配置文件..."

@@ -5,10 +5,11 @@
 APP_NAME="transmission-daemon"
 
 # 写入错误日志并退出
+ERROR_LOG="${TRIM_TEMP_LOGFILE:-/tmp/${APP_NAME}_error.log}"
 error_exit() {
     local message="$1"
     local exit_code="${2:-1}"
-    echo "$message" > "$TRIM_TEMP_LOGFILE"
+    echo "$message" > "$ERROR_LOG"
     exit $exit_code
 }
 BIN_DIR="${TRIM_APPDEST}/bin"
@@ -16,8 +17,11 @@ DATA_DIR="${TRIM_PKGVAR}"
 CONFIG_DIR="${DATA_DIR}/settings.json"
 PID_FILE="${TRIM_PKGTMP}/${APP_NAME}.pid"
 
-# 备份到shares目录（fnOS卸载/升级时保留）
-SHARE_DIR="/vol1/@appshare/transmission"
+# 备份到shares目录（fnOS卸载/升级时保留；优先系统变量推导，避免硬编码 vol1）
+SHARE_DIR="${TRIM_DATA_SHARE_PATHS%%:*}"
+if [ -z "$SHARE_DIR" ] || [ "$SHARE_DIR" = "/" ]; then
+    SHARE_DIR="/vol1/@appshare/transmission"
+fi
 BACKUP_DIR="${SHARE_DIR}/.data_backup"
 BACKUP_INFO_FILE="${SHARE_DIR}/.backup_info"
 
@@ -78,29 +82,53 @@ if [ "$DATA_ACTION" = "delete" ]; then
     rm -rf "${SHARE_DIR}/.data_backup"* 2>/dev/null || true
 else
     echo "用户选择保留数据，主动备份..."
-    
+
     if [ -d "$DATA_DIR" ] && [ -n "$(ls -A "$DATA_DIR" 2>/dev/null)" ]; then
+        # 保护：备份目录绝不能位于数据目录内部（防止备份到自身造成数据损坏）
+        case "$BACKUP_DIR/" in
+            "$DATA_DIR/"*)
+                SHARE_DIR="/vol1/@appshare/transmission"
+                BACKUP_DIR="${SHARE_DIR}/.data_backup"
+                ;;
+        esac
+
+        # 清理上次可能残留的备份，避免新旧数据混杂/嵌套
+        rm -rf "$BACKUP_DIR" 2>/dev/null || true
         # 创建备份目录
         if ! mkdir -p "$BACKUP_DIR" 2>/dev/null; then
             error_exit "错误：无法创建备份目录，升级失败"
         fi
 
-        # 复制所有数据
-        if ! cp -a "$DATA_DIR"/* "$BACKUP_DIR/" 2>/dev/null; then
+        # 复制所有数据（含隐藏文件）
+        if ! cp -a "$DATA_DIR"/. "$BACKUP_DIR"/ 2>/dev/null; then
             error_exit "错误：备份数据失败，升级终止"
         fi
 
         # 设置备份目录权限（确保可写）
         chown -R package:package "$BACKUP_DIR" 2>/dev/null || true
 
-        # 验证备份
-        if [ -f "${BACKUP_DIR}/settings.json" ] || [ -n "$(ls -A "$BACKUP_DIR" 2>/dev/null)" ]; then
-            echo "数据已成功备份到: $BACKUP_DIR"
-            # 尝试写入备份信息文件（可能权限不足，但不影响升级）
-            echo "BACKUP_DIR=$BACKUP_DIR" > "$BACKUP_INFO_FILE" 2>/dev/null || echo "警告：无法写入备份信息文件"
-        else
-            error_exit "错误：备份验证失败，升级终止"
+        # 验证备份完整性：settings.json 必须备份，torrents/resume 有内容时必须完整
+        BACKUP_OK=true
+        if [ ! -f "${BACKUP_DIR}/settings.json" ]; then
+            BACKUP_OK=false
         fi
+        if [ -d "$DATA_DIR/torrents" ] && [ -n "$(ls -A "$DATA_DIR/torrents" 2>/dev/null)" ]; then
+            if [ ! -d "${BACKUP_DIR}/torrents" ] || [ -z "$(ls -A "${BACKUP_DIR}/torrents" 2>/dev/null)" ]; then
+                BACKUP_OK=false
+            fi
+        fi
+        if [ -d "$DATA_DIR/resume" ] && [ -n "$(ls -A "$DATA_DIR/resume" 2>/dev/null)" ]; then
+            if [ ! -d "${BACKUP_DIR}/resume" ] || [ -z "$(ls -A "${BACKUP_DIR}/resume" 2>/dev/null)" ]; then
+                BACKUP_OK=false
+            fi
+        fi
+        if [ "$BACKUP_OK" = false ]; then
+            error_exit "错误：备份验证失败（关键数据未完整备份），升级终止"
+        fi
+
+        echo "数据已成功备份到: $BACKUP_DIR"
+        # 尝试写入备份信息文件（可能权限不足，但不影响升级）
+        echo "BACKUP_DIR=$BACKUP_DIR" > "$BACKUP_INFO_FILE" 2>/dev/null || echo "警告：无法写入备份信息文件"
     else
         echo "无现有数据需要备份或数据目录为空"
     fi

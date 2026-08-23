@@ -5,10 +5,11 @@
 APP_NAME="transmission-daemon"
 
 # 写入错误日志并退出
+ERROR_LOG="${TRIM_TEMP_LOGFILE:-/tmp/${APP_NAME}_error.log}"
 error_exit() {
     local message="$1"
     local exit_code="${2:-1}"
-    echo "$message" > "$TRIM_TEMP_LOGFILE"
+    echo "$message" > "$ERROR_LOG"
     exit $exit_code
 }
 BIN_DIR="${TRIM_APPDEST}/bin"
@@ -18,9 +19,20 @@ CONFIG_DIR="${DATA_DIR}/settings.json"
 CONFIG_FILE="${CONFIG_DIR}"
 PID_FILE="${TRIM_PKGTMP}/${APP_NAME}.pid"
 
-# 备份在shares目录
-SHARE_DIR="/vol1/@appshare/transmission"
+# 备份在shares目录（优先系统变量推导，避免硬编码 vol1）
+SHARE_DIR="${TRIM_DATA_SHARE_PATHS%%:*}"
+if [ -z "$SHARE_DIR" ] || [ "$SHARE_DIR" = "/" ]; then
+    SHARE_DIR="/vol1/@appshare/transmission"
+fi
 BACKUP_DIR="${SHARE_DIR}/.data_backup"
+
+# 保护：备份目录绝不能位于数据目录内部（防止误删/误恢复用户数据）
+case "$BACKUP_DIR/" in
+    "$DATA_DIR/"*)
+        SHARE_DIR="/vol1/@appshare/transmission"
+        BACKUP_DIR="${SHARE_DIR}/.data_backup"
+        ;;
+esac
 
 echo "=================================="
 echo "Transmission 升级完成"
@@ -60,17 +72,23 @@ if [ -d "$BACKUP_DIR" ] && [ -n "$(ls -A "$BACKUP_DIR" 2>/dev/null)" ]; then
 fi
 
 if [ "$BACKUP_EXISTS" = true ]; then
-    # 有备份：直接恢复数据
-    echo "从备份恢复数据..."
+    # 有备份：合并恢复，绝不先删除现有数据（即使恢复失败，原数据也不会丢失）
+    echo "从备份恢复数据（合并不删除现有文件）..."
     mkdir -p "$DATA_DIR"
-    rm -rf "$DATA_DIR"/* 2>/dev/null || true
-    cp -a "$BACKUP_DIR"/* "$DATA_DIR/" 2>/dev/null || true
+    if ! cp -a "$BACKUP_DIR"/. "$DATA_DIR"/ 2>/dev/null; then
+        echo "错误：从备份恢复数据失败，备份已保留在 $BACKUP_DIR，请勿删除！" > "$ERROR_LOG"
+        exit 1
+    fi
     echo "数据恢复成功"
-    
-    # 删除备份
-    rm -rf "$BACKUP_DIR"
-    echo "已清理shares中的备份"
-    
+
+    # 仅在关键文件恢复成功后才清理备份，避免恢复不完整导致数据不可恢复
+    if [ -f "$DATA_DIR/settings.json" ]; then
+        rm -rf "$BACKUP_DIR" 2>/dev/null || true
+        echo "已清理shares中的备份"
+    else
+        echo "警告：settings.json 未恢复，备份已保留在 $BACKUP_DIR"
+    fi
+
     # 修复数据目录权限（确保可写）
     chown -R package:package "$DATA_DIR" 2>/dev/null || true
     chmod 755 "$DATA_DIR" 2>/dev/null || true
@@ -109,15 +127,20 @@ fi
 # 网关模式：确保配置文件中 rpc-authentication-required=false 和 rpc-bind-address=127.0.0.1
 if [ -f "$CONFIG_DIR" ]; then
     echo "适配网关模式配置..."
-    sed -i 's|"rpc-authentication-required"[[:space:]]*:[[:space:]]*[^,]*|"rpc-authentication-required": false|g' "$CONFIG_DIR"
-    if ! grep -q '"rpc-bind-address"' "$CONFIG_DIR"; then
-        RPC_PORT=$(grep -o '"rpc-port"[[:space:]]*:[[:space:]]*[0-9]*' "$CONFIG_DIR" 2>/dev/null | grep -o '[0-9]*$')
-        if [ -n "$RPC_PORT" ]; then
-            sed -i "s|\"rpc-port\"[[:space:]]*:[[:space:]]*[0-9]*|\"rpc-port\": ${RPC_PORT},\n    \"rpc-bind-address\": \"127.0.0.1\"|g" "$CONFIG_DIR"
-        fi
-    else
-        sed -i 's|"rpc-bind-address"[[:space:]]*:[[:space:]]*"[^"]*"|"rpc-bind-address": "127.0.0.1"|g' "$CONFIG_DIR"
-    fi
+    python3 - "$CONFIG_DIR" << 'PYEOF'
+import json, sys
+config_path = sys.argv[1]
+try:
+    with open(config_path, 'r', encoding='utf-8') as f:
+        cfg = json.load(f)
+    cfg["rpc-authentication-required"] = False
+    cfg["rpc-bind-address"] = "127.0.0.1"
+    with open(config_path, 'w', encoding='utf-8') as f:
+        json.dump(cfg, f, indent=4, ensure_ascii=False)
+except Exception as e:
+    sys.stderr.write("适配网关模式配置失败 %s: %s\n" % (config_path, e))
+    sys.exit(1)
+PYEOF
 fi
 
 # 启动服务
