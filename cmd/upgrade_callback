@@ -19,12 +19,29 @@ CONFIG_DIR="${DATA_DIR}/settings.json"
 CONFIG_FILE="${CONFIG_DIR}"
 PID_FILE="${TRIM_PKGTMP}/${APP_NAME}.pid"
 
-# 备份在shares目录（优先系统变量推导，避免硬编码 vol1）
-SHARE_DIR="${TRIM_DATA_SHARE_PATHS%%:*}"
-if [ -z "$SHARE_DIR" ] || [ "$SHARE_DIR" = "/" ]; then
+# 备份在shares目录（解析 TRIM_DATA_SHARE_PATHS 多路径，取第一个可用）
+SHARE_DIR=""
+if [ -n "$TRIM_DATA_SHARE_PATHS" ]; then
+    IFS=':' read -ra _share_parts <<< "$TRIM_DATA_SHARE_PATHS"
+    for _p in "${_share_parts[@]}"; do
+        _p="${_p%/}"
+        if [ -n "$_p" ] && [ "$_p" != "/" ] && [ -d "$_p" ]; then
+            SHARE_DIR="$_p"
+            break
+        fi
+    done
+fi
+if [ -z "$SHARE_DIR" ]; then
     SHARE_DIR="/vol1/@appshare/transmission"
 fi
 BACKUP_DIR="${SHARE_DIR}/.data_backup"
+# 优先从备份信息文件定位（兼容共享路径解析差异，防止备份存在却找不到）
+if [ -f "${SHARE_DIR}/.backup_info" ]; then
+    _info_backup=$(grep '^BACKUP_DIR=' "${SHARE_DIR}/.backup_info" 2>/dev/null | cut -d= -f2-)
+    if [ -n "$_info_backup" ] && [ -d "$_info_backup" ]; then
+        BACKUP_DIR="$_info_backup"
+    fi
+fi
 
 # 保护：备份目录绝不能位于数据目录内部（防止误删/误恢复用户数据）
 case "$BACKUP_DIR/" in
@@ -81,12 +98,26 @@ if [ "$BACKUP_EXISTS" = true ]; then
     fi
     echo "数据恢复成功"
 
-    # 仅在关键文件恢复成功后才清理备份，避免恢复不完整导致数据不可恢复
-    if [ -f "$DATA_DIR/settings.json" ]; then
+    # 仅在关键数据完整恢复后才清理备份，避免恢复不完整导致数据不可恢复
+    CLEANUP_OK=true
+    if [ ! -f "$DATA_DIR/settings.json" ]; then
+        CLEANUP_OK=false
+    fi
+    if [ -d "${BACKUP_DIR}/torrents" ] && [ -n "$(ls -A "${BACKUP_DIR}/torrents" 2>/dev/null)" ]; then
+        if [ ! -d "$DATA_DIR/torrents" ] || [ -z "$(ls -A "$DATA_DIR/torrents" 2>/dev/null)" ]; then
+            CLEANUP_OK=false
+        fi
+    fi
+    if [ -d "${BACKUP_DIR}/resume" ] && [ -n "$(ls -A "${BACKUP_DIR}/resume" 2>/dev/null)" ]; then
+        if [ ! -d "$DATA_DIR/resume" ] || [ -z "$(ls -A "$DATA_DIR/resume" 2>/dev/null)" ]; then
+            CLEANUP_OK=false
+        fi
+    fi
+    if [ "$CLEANUP_OK" = true ]; then
         rm -rf "$BACKUP_DIR" 2>/dev/null || true
         echo "已清理shares中的备份"
     else
-        echo "警告：settings.json 未恢复，备份已保留在 $BACKUP_DIR"
+        echo "警告：恢复校验未通过（settings.json/torrents/resume 不完整），备份已保留在 $BACKUP_DIR"
     fi
 
     # 修复数据目录权限（确保可写）
@@ -124,21 +155,22 @@ else
     fi
 fi
 
-# 网关模式：确保配置文件中 rpc-authentication-required=false 和 rpc-bind-address=127.0.0.1
+# 兼容旧版：仅当 rpc 关键配置缺失时补默认，不再覆盖用户已有的 RPC 绑定/认证设置
+# （避免升级后用户自定义的 RPC 对外直连 / 认证配置被重置）
 if [ -f "$CONFIG_DIR" ]; then
-    echo "适配网关模式配置..."
+    echo "检查并补全 RPC 配置..."
     python3 - "$CONFIG_DIR" << 'PYEOF'
 import json, sys
 config_path = sys.argv[1]
 try:
     with open(config_path, 'r', encoding='utf-8') as f:
         cfg = json.load(f)
-    cfg["rpc-authentication-required"] = False
-    cfg["rpc-bind-address"] = "127.0.0.1"
+    cfg.setdefault("rpc-authentication-required", False)
+    cfg.setdefault("rpc-bind-address", "127.0.0.1")
     with open(config_path, 'w', encoding='utf-8') as f:
         json.dump(cfg, f, indent=4, ensure_ascii=False)
 except Exception as e:
-    sys.stderr.write("适配网关模式配置失败 %s: %s\n" % (config_path, e))
+    sys.stderr.write("补全 RPC 配置失败 %s: %s\n" % (config_path, e))
     sys.exit(1)
 PYEOF
 fi
@@ -157,6 +189,9 @@ for path in "${TRIM_APPDEST}/cmd/main" "${TRIM_PKGETC}/../cmd/main" "/var/apps/t
 done
 
 if [ -n "$MAIN_SCRIPT" ]; then
+    # 同步/修复网关免密凭证：升级后 settings.json 密码通常已是 hash，
+    # 若 .rpc_secret 缺失则重建随机内部凭证，避免升级后打开桌面图标弹认证框
+    "$MAIN_SCRIPT" write_secret 2>/dev/null || true
     "$MAIN_SCRIPT" start
     EXIT_CODE=$?
 else

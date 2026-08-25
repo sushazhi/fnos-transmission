@@ -76,6 +76,34 @@
       {
         "type": "tips",
         "helpText": "📍 <b>端口说明：</b>通过 fnOS 统一网关访问时仍使用固定地址 /app/transmission，此端口用于本机内部 RPC 服务与直连访问。修改后保存将重启应用使配置生效"
+      },
+      {
+        "type": "text",
+        "field": "wizard_rpc_bind_address",
+        "label": "RPC 监听地址（可选）",
+        "initValue": "",
+        "rules": [
+          {
+            "pattern": "^(127\\.0\\.0\\.1|0\\.0\\.0\\.0|[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3})$",
+            "message": "请输入有效 IP 地址，如 0.0.0.0 或 127.0.0.1"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "field": "wizard_rpc_auth",
+        "label": "RPC 认证（可选，0 关闭 / 1 开启）",
+        "initValue": "",
+        "rules": [
+          {
+            "pattern": "^(0|1)$",
+            "message": "请输入 0（关闭认证）或 1（开启认证）"
+          }
+        ]
+      },
+      {
+        "type": "tips",
+        "helpText": "🌐 <b>局域网 RPC 直连：</b>如需从局域网其他设备通过 RPC 连接，请设置 监听地址=0.0.0.0、认证=1，并填写上面的用户名/密码。留空表示保持当前配置"
       }
     ]
   }

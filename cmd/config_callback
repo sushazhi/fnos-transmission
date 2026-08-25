@@ -44,6 +44,9 @@ chown -R package:package "$DATA_DIR" 2>/dev/null || true
 RPC_USERNAME="${wizard_rpc_username:-${RPC_USERNAME:-transmission}}"
 RPC_PASSWORD="${wizard_rpc_password:-}"
 SAVE_PATH="${wizard_save_path:-}"
+# RPC 对外绑定与认证开关（可选，不传则保留用户已有配置）
+RPC_BIND_ADDRESS="${wizard_rpc_bind_address:-}"
+RPC_AUTH_REQUIRED="${wizard_rpc_auth:-}"
 
 # 网关模式：端口固定内部值，默认9090；可从配置向导修改
 WEBUI_PORT="${wizard_webui_port:-9090}"
@@ -69,9 +72,9 @@ if [ -f "$CONFIG_DIR" ]; then
 
     # 用 python3 安全更新 JSON（避免 sed 注入特殊字符破坏配置/密码）
     # 密码经环境变量传递，避免出现在命令行/进程列表中
-    RPC_PASSWORD_VAL="$RPC_PASSWORD" python3 - "$CONFIG_DIR" "$RPC_USERNAME" "$SAVE_PATH" "$WEBUI_PORT" << 'PYEOF'
+    RPC_PASSWORD_VAL="$RPC_PASSWORD" python3 - "$CONFIG_DIR" "$RPC_USERNAME" "$SAVE_PATH" "$WEBUI_PORT" "$RPC_BIND_ADDRESS" "$RPC_AUTH_REQUIRED" << 'PYEOF'
 import json, os, sys
-config_path, username, save_path, webui_port = sys.argv[1:5]
+config_path, username, save_path, webui_port, bind_address, auth_required = sys.argv[1:7]
 password = os.environ.get("RPC_PASSWORD_VAL", "")
 try:
     with open(config_path, 'r', encoding='utf-8') as f:
@@ -90,9 +93,14 @@ if save_path:
     cfg["download-dir"] = save_path
 # 端口
 cfg["rpc-port"] = int(webui_port)
-# 网关模式：禁用RPC认证、绑定127.0.0.1
-cfg["rpc-authentication-required"] = False
-cfg["rpc-bind-address"] = "127.0.0.1"
+# RPC 对外绑定与认证：仅当向导显式提供时才更新，否则保留用户已有配置
+# （网关模式默认 127.0.0.1 + 免密；如需局域网 RPC 直连，可设置 bind=0.0.0.0、auth=1）
+if bind_address:
+    cfg["rpc-bind-address"] = bind_address
+if auth_required in ("1", "true", "True"):
+    cfg["rpc-authentication-required"] = True
+elif auth_required in ("0", "false", "False"):
+    cfg["rpc-authentication-required"] = False
 try:
     with open(config_path, 'w', encoding='utf-8') as f:
         json.dump(cfg, f, indent=4, ensure_ascii=False)
@@ -133,6 +141,14 @@ else
             RPC_PASSWORD=$(echo "$RPC_PASSWORD" | tr -dc 'a-zA-Z0-9' | head -c 24)
         fi
     fi
+    # 首次创建默认网关模式（127.0.0.1 + 免密）；可通过向导字段 wizard_rpc_bind_address / wizard_rpc_auth 覆盖
+    RPC_BIND_ADDRESS="${RPC_BIND_ADDRESS:-127.0.0.1}"
+    RPC_AUTH_REQUIRED="${RPC_AUTH_REQUIRED:-0}"
+    if [ "$RPC_AUTH_REQUIRED" = "1" ]; then
+        RPC_AUTH_BOOL="true"
+    else
+        RPC_AUTH_BOOL="false"
+    fi
 
     cat > "$CONFIG_DIR" << EOF
 {
@@ -146,8 +162,8 @@ else
     "peer-port": 51413,
     "peer-port-random-on-start": true,
     "rpc-enabled": true,
-    "rpc-authentication-required": false,
-    "rpc-bind-address": "127.0.0.1",
+    "rpc-authentication-required": ${RPC_AUTH_BOOL},
+    "rpc-bind-address": "${RPC_BIND_ADDRESS}",
     "rpc-port": ${WEBUI_PORT},
     "rpc-url": "/transmission/",
     "rpc-host-whitelist-enabled": false,
@@ -161,6 +177,9 @@ EOF
 fi
 
 chown -R package:package "$DATA_DIR" 2>/dev/null || true
+
+# 同步网关免密凭证（用户修改密码后刷新 .rpc_secret，保证代理注入的凭证与 daemon 一致）
+"$SCRIPT_DIR/main" write_secret 2>/dev/null || true
 
 echo ""
 echo "==================================="

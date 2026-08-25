@@ -19,9 +19,10 @@
 - ⚡ **速度控制** - 灵活的速度限制和队列管理
 - 🌐 **WebUI** - 内置Web界面，随时随地管理
 - 📁 **下载目录选择** - 应用页面内可直接选择/打开下载目录（fnOS 文件选择器）
-- 🔐 **重装保留账号** - 重装/升级时留空用户名密码即保留原有账号信息
+- 🔐 **网关免密** - 接入 fnOS 统一网关，登录系统后即可直接打开，无需设置账号密码
+- 🔒 **RPC 认证免密** - 即使开启 RPC 认证，经统一网关访问时由代理自动注入凭证，无需再次登录
 - 💾 **数据持久化** - 配置和下载数据保存在独立存储空间
-- 🔄 **平滑升级** - 升级时自动备份和恢复数据
+- 🔄 **平滑升级** - 升级时自动备份和恢复数据（含种子数据）
 
 ---
 
@@ -56,7 +57,7 @@ cd fnos-transmission
 python build.py
 
 # 指定应用版本
-python build.py --app-version 4.1.3.2.1
+python build.py --app-version 4.1.3.2.8
 
 # 指定架构构建（amd64）
 python build.py --arch amd64
@@ -96,8 +97,8 @@ GitHub Actions 会自动为 **arm64** 和 **amd64** 两种架构构建，产物�
 
 | 文件 | 说明 |
 |------|------|
-| `transmission-4.1.3.2.1-arm64.fpk` | fnOS 安装包（ARM64） |
-| `transmission-4.1.3.2.1-amd64.fpk` | fnOS 安装包（amd64） |
+| `transmission-4.1.3.2.8-arm64.fpk` | fnOS 安装包（ARM64） |
+| `transmission-4.1.3.2.8-amd64.fpk` | fnOS 安装包（amd64） |
 | `.local-build/` | 构建缓存目录（可删除） |
 
 ---
@@ -139,14 +140,16 @@ fnos-transmission/
 │   │   └── transmission-daemon  # Transmission守护进程
 │   ├── lib/                # 构建产生的库文件
 │   │   └── libminiupnpc.so.*    # UPnP功能库文件
-│   └── ui/                  # WebUI资源
+│   └── ui/                  # WebUI资源（平铺于 ui/ 根，无额外 web 子目录，避免 fnOS 生成多余软链接）
 │       ├── config          # 桌面应用配置
 │       ├── images/         # 应用图标
 │       │   ├── icon_64.png # 64x64图标
 │       │   └── icon_256.png # 256x256图标
 │       ├── index.html      # WebUI主页面
+│       ├── assets/         # WebUI 静态资源
 │       ├── css/            # WebUI样式文件
-│       └── js/             # WebUI脚本文件
+│       ├── js/             # WebUI脚本文件
+│       └── update-check.js # 应用更新检测脚本
 ├── cmd/                    # fnOS 生命周期脚本
 │   ├── config_callback     # 配置后置
 │   ├── config_init         # 配置初始化
@@ -202,6 +205,11 @@ fnos-transmission/
 ---
 
 ## 📝 更新日志
+
+### v4.1.3.2.8
+- 🛠️ 修复升级时种子数据（torrents）丢失：备份路径多候选解析、恢复完整性校验、备份保留策略
+- 🔧 升级不再重置用户 RPC 绑定/认证设置
+- 🔐 RPC 认证开启后，通过 fnOS 统一网关访问仍免密（代理自动注入凭证）
 
 ### v4.1.3.2.1
 - ✨ 新增打开/选择下载目录（fnOS文件选择器）

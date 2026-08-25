@@ -4,6 +4,7 @@ import platform as _platform
 from concurrent.futures import ThreadPoolExecutor
 from http.client import HTTPConnection
 from urllib.parse import urlparse, urlunparse
+import base64
 
 SOCK_PATH = sys.argv[1]
 TARGET_HOST = sys.argv[2]
@@ -343,14 +344,74 @@ def _set_config_download_dir(new_path):
     return False
 
 
+_cred_cache = {"creds": None, "mtime": 0, "session_id": "", "session_time": 0}
+RPC_SECRET_FILE = os.path.join(os.path.dirname(CONFIG_PATH), ".rpc_secret") if CONFIG_PATH else None
+
+def _get_creds():
+    """从 .rpc_secret 读取明文 RPC 凭证 (user, pass)，用于网关代理免密注入。"""
+    if not RPC_SECRET_FILE or not os.path.exists(RPC_SECRET_FILE):
+        return None
+    try:
+        mtime = os.path.getmtime(RPC_SECRET_FILE)
+        if _cred_cache["mtime"] == mtime and _cred_cache["creds"]:
+            return _cred_cache["creds"]
+        with open(RPC_SECRET_FILE, "r") as f:
+            line = f.read().strip()
+        if ":" in line:
+            user, pwd = line.split(":", 1)
+            if user and pwd:
+                _cred_cache["creds"] = (user, pwd)
+                _cred_cache["mtime"] = mtime
+                return (user, pwd)
+    except Exception:
+        pass
+    return None
+
+def _auth_header(creds):
+    try:
+        raw = "%s:%s" % (creds[0], creds[1])
+        return "Basic " + base64.b64encode(raw.encode("utf-8")).decode("ascii")
+    except Exception:
+        return None
+
+def _get_session_id(creds, force=False):
+    """向 daemon 请求 X-Transmission-Session-Id，带 5 分钟缓存。"""
+    now = time.time()
+    if not force and _cred_cache["session_id"] and (now - _cred_cache["session_time"]) < 300:
+        return _cred_cache["session_id"]
+    try:
+        port = get_target_port()
+        conn = HTTPConnection(TARGET_HOST, port, timeout=15)
+        hdrs = {}
+        auth = _auth_header(creds)
+        if auth:
+            hdrs["Authorization"] = auth
+        conn.request("GET", "/transmission/rpc", headers=hdrs)
+        resp = conn.getresponse()
+        resp.read()
+        sid = resp.getheader("X-Transmission-Session-Id", "")
+        conn.close()
+        if sid:
+            _cred_cache["session_id"] = sid
+            _cred_cache["session_time"] = now
+            return sid
+    except Exception:
+        pass
+    return ""
+
 def _call_transmission_rpc(method, arguments):
-    """调用 Transmission RPC（JSON-RPC），自动处理 X-Transmission-Session-Id。
+    """调用 Transmission RPC（JSON-RPC），自动处理认证与 X-Transmission-Session-Id。
     返回 (ok, response_dict)。"""
     port = get_target_port()
+    creds = _get_creds()
+    auth = _auth_header(creds) if creds else None
     try:
-        # 先 GET 获取 session id
+        # 先 GET 获取 session id（带认证）
         conn = HTTPConnection(TARGET_HOST, port, timeout=15)
-        conn.request("GET", "/transmission/rpc")
+        hdrs = {}
+        if auth:
+            hdrs["Authorization"] = auth
+        conn.request("GET", "/transmission/rpc", headers=hdrs)
         resp = conn.getresponse()
         resp.read()
         session_id = resp.getheader("X-Transmission-Session-Id", "")
@@ -361,12 +422,29 @@ def _call_transmission_rpc(method, arguments):
             "Content-Type": "application/json",
             "X-Transmission-Session-Id": session_id,
         }
+        if auth:
+            headers["Authorization"] = auth
         conn = HTTPConnection(TARGET_HOST, port, timeout=15)
         conn.request("POST", "/transmission/rpc", body=payload, headers=headers)
         resp = conn.getresponse()
         data = resp.read()
         status = resp.status
         conn.close()
+        if status == 409:
+            # session id 过期，刷新后重试一次
+            conn = HTTPConnection(TARGET_HOST, port, timeout=15)
+            conn.request("GET", "/transmission/rpc", headers=({"Authorization": auth} if auth else {}))
+            resp = conn.getresponse()
+            resp.read()
+            session_id = resp.getheader("X-Transmission-Session-Id", "")
+            conn.close()
+            headers["X-Transmission-Session-Id"] = session_id
+            conn = HTTPConnection(TARGET_HOST, port, timeout=15)
+            conn.request("POST", "/transmission/rpc", body=payload, headers=headers)
+            resp = conn.getresponse()
+            data = resp.read()
+            status = resp.status
+            conn.close()
         try:
             return status == 200, json.loads(data)
         except Exception:
@@ -900,6 +978,19 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             headers[key] = value
         headers["Accept-Encoding"] = "gzip, deflate"
 
+        # 网关免密：对 WebUI/RPC 请求注入内部凭证，局域网直连不受影响（仍需账号密码）
+        # 注意：认证开启时 daemon 对 /transmission/web 静态页面同样要求认证，
+        # 若仅注入 RPC 路径，桌面图标顶级导航加载页面会收到 401 并弹出浏览器 Basic 认证框
+        creds = _get_creds()
+        if creds and path.startswith("/transmission"):
+            auth = _auth_header(creds)
+            if auth:
+                headers["Authorization"] = auth
+            if path == "/transmission/rpc":
+                sid = _get_session_id(creds)
+                if sid:
+                    headers["X-Transmission-Session-Id"] = sid
+
         content_length = self.headers.get("Content-Length")
         body = None
         if content_length:
@@ -914,6 +1005,17 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 self.send_error(502, str(e))
                 conn.close()
                 return
+
+            if resp.status == 409 and creds and path == "/transmission/rpc":
+                # session id 过期，刷新后重试一次
+                resp.read()
+                conn.close()
+                sid = _get_session_id(creds, force=True)
+                if sid:
+                    headers["X-Transmission-Session-Id"] = sid
+                    conn = self._get_backend()
+                    continue
+                break
 
             if resp.status in (301, 302, 303, 307, 308):
                 loc = resp.getheader("Location", "")
@@ -1022,6 +1124,14 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                       "sec-websocket-version", "sec-websocket-protocol", "origin"):
                 continue
             req_line += "{}: {}\r\n".format(key, value)
+        # WebSocket 握手同样注入内部凭证，保证网关下 WS RPC 免密
+        creds = _get_creds()
+        auth = _auth_header(creds) if creds else None
+        if auth:
+            req_line += "Authorization: {}\r\n".format(auth)
+            sid = _get_session_id(creds)
+            if sid:
+                req_line += "X-Transmission-Session-Id: {}\r\n".format(sid)
         req_line += "\r\n"
 
         try:

@@ -49,6 +49,94 @@ read_transmission_port() {
     fi
 }
 
+write_rpc_secret() {
+    # 同步/修复 .rpc_secret，保证网关代理始终能拿到与 daemon 当前密码一致的明文凭证。
+    # 三种情形：
+    #  1) settings.json 密码是明文          -> 直接同步到 .rpc_secret
+    #  2) 密码是 hash 且 .rpc_secret 已有明文 -> 用该明文回写 settings.json（同一密码重新 hash，保持一致）
+    #  3) 密码是 hash 且 .rpc_secret 无明文   -> 生成新的随机内部凭证，同时写 settings.json 和 .rpc_secret
+    #     （升级/重装后 settings.json 密码已被 daemon 加密写回、且无历史明文时，必须重建凭证否则网关免密失效）
+    if [ ! -f "$CONFIG_DIR" ]; then
+        return 0
+    fi
+    SECRET_FILE="${DATA_DIR}/.rpc_secret"
+    python3 - "$CONFIG_DIR" "$SECRET_FILE" "$(id -u)" "$(id -g)" << 'PYEOF'
+import json, sys, os, secrets
+config_path, secret_path, uid, gid = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+
+def load_cfg():
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+def read_secret():
+    try:
+        with open(secret_path, 'r') as f:
+            line = f.read().strip()
+        if ":" in line:
+            u, p = line.split(":", 1)
+            if u and p:
+                return (u, p)
+    except Exception:
+        pass
+    return None
+
+def write_secret(user, pwd):
+    try:
+        with open(secret_path, 'w') as f:
+            f.write("%s:%s" % (user, pwd))
+        os.chmod(secret_path, 0o600)
+        try:
+            os.chown(secret_path, int(uid), int(gid))
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+def save_cfg(cfg):
+    try:
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(cfg, f, indent=4, ensure_ascii=False)
+    except Exception:
+        pass
+
+cfg = load_cfg()
+if not cfg:
+    sys.exit(0)
+
+user = (cfg.get("rpc-username") or "").strip() or "transmission"
+pwd = cfg.get("rpc-password") or ""
+
+if not pwd:
+    # 未设置密码：无需认证，清空 secret
+    write_secret(user, "")
+    sys.exit(0)
+
+if pwd.startswith("{"):
+    # 密码已被 daemon 加密写回（hash 形式，不可逆）
+    secret = read_secret()
+    if secret:
+        # 用 .rpc_secret 中的明文回写 settings.json，确保与 daemon 当前密码一致
+        if cfg.get("rpc-password") != secret[1] or cfg.get("rpc-username") != secret[0]:
+            cfg["rpc-username"] = secret[0]
+            cfg["rpc-password"] = secret[1]
+            save_cfg(cfg)
+        write_secret(secret[0], secret[1])
+    else:
+        # 无明文可用：生成新的随机内部凭证
+        new_pwd = secrets.token_urlsafe(18)
+        cfg["rpc-username"] = user
+        cfg["rpc-password"] = new_pwd
+        save_cfg(cfg)
+        write_secret(user, new_pwd)
+else:
+    # 明文密码：直接同步
+    write_secret(user, pwd)
+PYEOF
+}
+
 kill_orphan_proxies() {
     # 清理所有残留的 gateway-proxy 进程（防止历史孤儿进程堆积占用内存）
     # 匹配本应用专用的 GATEWAY_SOCK，避免误杀其他应用
@@ -222,6 +310,9 @@ EOF
         fi
     fi
 
+    # 同步 RPC 明文凭证到 .rpc_secret，供网关代理免密注入（开启认证后网关访问仍免密）
+    write_rpc_secret
+
     # 启动transmission-daemon
     echo "启动 ${APP_NAME}..."
     
@@ -328,6 +419,11 @@ status() {
 }
 
 case "$1" in
+    write_secret)
+        # 供 install/upgrade/config 回调复用：确保 .rpc_secret 与 daemon 凭证一致
+        write_rpc_secret
+        exit $?
+        ;;
     start)
         start
         ;;

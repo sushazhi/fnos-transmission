@@ -17,9 +17,20 @@ DATA_DIR="${TRIM_PKGVAR}"
 CONFIG_DIR="${DATA_DIR}/settings.json"
 PID_FILE="${TRIM_PKGTMP}/${APP_NAME}.pid"
 
-# 备份到shares目录（fnOS卸载/升级时保留；优先系统变量推导，避免硬编码 vol1）
-SHARE_DIR="${TRIM_DATA_SHARE_PATHS%%:*}"
-if [ -z "$SHARE_DIR" ] || [ "$SHARE_DIR" = "/" ]; then
+# 备份到shares目录（fnOS卸载/升级时保留）
+# 解析 TRIM_DATA_SHARE_PATHS 中的多个共享路径，取第一个可用的，避免单一路径解析失败导致备份丢失
+SHARE_DIR=""
+if [ -n "$TRIM_DATA_SHARE_PATHS" ]; then
+    IFS=':' read -ra _share_parts <<< "$TRIM_DATA_SHARE_PATHS"
+    for _p in "${_share_parts[@]}"; do
+        _p="${_p%/}"
+        if [ -n "$_p" ] && [ "$_p" != "/" ] && [ -d "$_p" ]; then
+            SHARE_DIR="$_p"
+            break
+        fi
+    done
+fi
+if [ -z "$SHARE_DIR" ]; then
     SHARE_DIR="/vol1/@appshare/transmission"
 fi
 BACKUP_DIR="${SHARE_DIR}/.data_backup"
@@ -83,7 +94,7 @@ if [ "$DATA_ACTION" = "delete" ]; then
 else
     echo "用户选择保留数据，主动备份..."
 
-    if [ -d "$DATA_DIR" ] && [ -n "$(ls -A "$DATA_DIR" 2>/dev/null)" ]; then
+    if [ -d "$DATA_DIR" ] && [ -n "$(find "$DATA_DIR" -mindepth 1 -maxdepth 1 2>/dev/null | head -1)" ]; then
         # 保护：备份目录绝不能位于数据目录内部（防止备份到自身造成数据损坏）
         case "$BACKUP_DIR/" in
             "$DATA_DIR/"*)

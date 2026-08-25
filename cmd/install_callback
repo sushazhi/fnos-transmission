@@ -155,6 +155,9 @@ fi
 # 确保配置目录权限正确
 chown -R package:package "$DATA_DIR" 2>/dev/null || true
 
+# 同步网关免密凭证（重装/覆盖安装后 settings.json 密码可能已是 hash，需确保 .rpc_secret 有对应明文）
+"${TRIM_APPDEST}/cmd/main" write_secret 2>/dev/null || true
+
 echo ""
 echo "=================================="
 echo "Transmission 安装完成"
