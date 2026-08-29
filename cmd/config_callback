@@ -188,7 +188,8 @@ echo "==================================="
 echo ""
 echo "用户名: ${RPC_USERNAME}"
 echo ""
-echo "网关模式: /app/transmission -> 127.0.0.1:${WEBUI_PORT}"
+echo "网关模式: /app/transmission -> 127.0.0.1:8080 (transmission-manager)"
+echo "RPC 服务: 127.0.0.1:${WEBUI_PORT}"
 echo ""
 
 # 根据之前的状态决定是否启动服务

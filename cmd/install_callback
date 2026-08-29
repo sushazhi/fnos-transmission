@@ -15,6 +15,9 @@ if ! chmod +x "$BIN_DIR/transmission-daemon" 2>/dev/null; then
     exit 1
 fi
 
+# WebUI 后端（transmission-manager）可执行权限
+chmod +x "$BIN_DIR/transmission-manager" 2>/dev/null || echo "警告：无法设置 transmission-manager 可执行权限"
+
 # 设置库文件权限（755 对.so库是推荐的，包含执行权限）
 if [ -d "$LIB_DIR" ]; then
     chmod 755 "$LIB_DIR" 2>/dev/null || true
@@ -163,7 +166,7 @@ echo "=================================="
 echo "Transmission 安装完成"
 echo "=================================="
 echo ""
-echo "网关模式: /app/transmission -> 127.0.0.1:${WEBUI_PORT}"
+echo "网关模式: /app/transmission -> 127.0.0.1:8080 (transmission-manager)"
 echo ""
 echo "下载目录: ${SAVE_PATH}"
 echo "数据目录: $DATA_DIR"

@@ -7,7 +7,7 @@
             "protocol": "",
             "gatewaySocket": "transmission.sock",
             "gatewayPrefix": "/app/transmission",
-            "url": "/app/transmission/transmission/web/",
+            "url": "/app/transmission/",
             "allUsers": true
         }
     }

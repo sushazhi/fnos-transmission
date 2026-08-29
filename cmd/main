@@ -7,18 +7,20 @@ LIB_DIR="${TRIM_APPDEST}/lib"
 DATA_DIR="${TRIM_PKGVAR}"
 CONFIG_DIR="${DATA_DIR}/settings.json"
 PID_FILE="${TRIM_PKGTMP}/${APP_NAME}.pid"
-PROXY_PID_FILE="${TRIM_PKGTMP}/${APP_NAME}-proxy.pid"
 LOG_FILE="${TRIM_PKGVAR}/${APP_NAME}.log"
-UI_DIR="${TRIM_APPDEST}/ui"
 
-PROXY_SCRIPT="${BIN_DIR}/gateway-proxy.py"
+# WebUI 由 transmission-manager 提供（Go+React 单二进制，内嵌前端）。
+# manager 直接监听 fnOS 统一网关的 Unix socket（无中间代理层）。
+MANAGER_BIN="${BIN_DIR}/transmission-manager"
+MANAGER_PID_FILE="${TRIM_PKGTMP}/${APP_NAME}-manager.pid"
+MANAGER_DATA_DIR="${DATA_DIR}/manager"
 GATEWAY_SOCK="${TRIM_APPDEST}/transmission.sock"
+GATEWAY_PREFIX="/app/transmission"
 
-# 设置库路径和 WebUI 路径
+# 设置库路径（WebUI 前端已内嵌于 transmission-manager，不再覆盖 daemon 的 web 目录）
 export LD_LIBRARY_PATH="${LIB_DIR}:${LD_LIBRARY_PATH}"
-export TRANSMISSION_WEB_HOME="${UI_DIR}"
 
-# 网关模式：端口固定内部值，不暴露给用户
+# daemon RPC 端口（内部值，不暴露给用户；manager 通过 TR_URL 连接此端口）
 WEBUI_PORT="9090"
 
 # 检查环境变量
@@ -137,77 +139,96 @@ else:
 PYEOF
 }
 
-kill_orphan_proxies() {
-    # 清理所有残留的 gateway-proxy 进程（防止历史孤儿进程堆积占用内存）
-    # 匹配本应用专用的 GATEWAY_SOCK，避免误杀其他应用
-    local orphans
-    orphans=$(pgrep -f "gateway-proxy.py.*${GATEWAY_SOCK}" 2>/dev/null)
-    for pid in $orphans; do
-        # 跳过本次要启动的 PID 文件记录
-        if [ -f "$PROXY_PID_FILE" ] && [ "$pid" = "$(cat "$PROXY_PID_FILE" 2>/dev/null)" ]; then
-            continue
-        fi
-        kill -9 "$pid" 2>/dev/null && echo "清理残留代理进程 PID: $pid"
-    done
+read_rpc_creds() {
+    # 从 .rpc_secret 读取 RPC 明文凭证（user:pass），供 transmission-manager 连接 daemon 使用
+    RPC_USER="transmission"
+    RPC_PASS=""
+    local secret_file="${DATA_DIR}/.rpc_secret"
+    if [ -f "$secret_file" ]; then
+        IFS=':' read -r RPC_USER RPC_PASS < "$secret_file"
+        [ -z "$RPC_USER" ] && RPC_USER="transmission"
+    fi
 }
 
-start_proxy() {
-    # 先清理所有残留的同名代理进程，再启动新实例，避免多个进程堆积
-    kill_orphan_proxies
-
-    if [ -f "$PROXY_PID_FILE" ]; then
-        local PROXY_PID=$(cat "$PROXY_PID_FILE")
-        if kill -0 "$PROXY_PID" 2>/dev/null; then
-            echo "proxy is already running (PID: $PROXY_PID)"
-            return 0
-        fi
-        rm -f "$PROXY_PID_FILE"
-    fi
-
-    rm -f "$GATEWAY_SOCK"
-    read_transmission_port
-
-    if [ ! -f "$PROXY_SCRIPT" ]; then
-        echo "Warning: proxy script not found at $PROXY_SCRIPT, gateway proxy unavailable"
+start_manager() {
+    if [ ! -f "$MANAGER_BIN" ]; then
+        echo "Warning: transmission-manager not found, WebUI unavailable"
         return 1
     fi
+    if [ ! -x "$MANAGER_BIN" ]; then
+        chmod +x "$MANAGER_BIN" 2>/dev/null || true
+    fi
 
-    python3 "$PROXY_SCRIPT" "$GATEWAY_SOCK" 127.0.0.1 "$WEBUI_PORT" "$CONFIG_DIR" >> "$LOG_FILE" 2>&1 &
-
-    PROXY_PID=$!
-    echo $PROXY_PID > "$PROXY_PID_FILE"
-
-    # 轮询等待 Unix socket 创建（最大3秒）
-    for i in $(seq 1 15); do
-        if kill -0 "$PROXY_PID" 2>/dev/null && [ -S "$GATEWAY_SOCK" ]; then
-            echo "proxy started (PID: $PROXY_PID), gateway: ${GATEWAY_SOCK} -> 127.0.0.1:${WEBUI_PORT}"
+    if [ -f "$MANAGER_PID_FILE" ]; then
+        local MPID=$(cat "$MANAGER_PID_FILE")
+        if kill -0 "$MPID" 2>/dev/null; then
+            echo "transmission-manager is already running (PID: $MPID)"
             return 0
+        fi
+        rm -f "$MANAGER_PID_FILE"
+    fi
+
+    read_transmission_port
+    read_rpc_creds
+    mkdir -p "$MANAGER_DATA_DIR"
+
+    # 升级/重装场景：清理旧版本残留的 gateway-proxy 代理进程与 socket，
+    # 确保网关入口由 manager 直接接管（否则旧进程会占用 GATEWAY_SOCK）
+    pkill -f "gateway-proxy.py.*${GATEWAY_SOCK}" 2>/dev/null || true
+    rm -f "$GATEWAY_SOCK"
+
+    # 通过环境变量注入连接配置（优先级最高，覆盖 .env/.env.local/config.yaml）
+    # SERVER_SOCKET：直接监听 fnOS 网关 Unix socket；GATEWAY_PREFIX：网关路径前缀
+    # TM_PLATFORM：显式指定宿主平台为 fnOS，启用文件选择器/打开目录/更新等专属能力
+    TR_URL="http://127.0.0.1:${WEBUI_PORT}/transmission/rpc" \
+    TR_USER="${RPC_USER}" \
+    TR_PASS="${RPC_PASS}" \
+    SERVER_SOCKET="${GATEWAY_SOCK}" \
+    GATEWAY_PREFIX="${GATEWAY_PREFIX}" \
+    TM_PLATFORM="fnos" \
+    TM_DATA_DIR="${MANAGER_DATA_DIR}" \
+    GIN_MODE="release" \
+    LOG_LEVEL="warn" \
+    "$MANAGER_BIN" >> "$LOG_FILE" 2>&1 &
+    local MPID=$!
+    echo $MPID > "$MANAGER_PID_FILE"
+
+    # 轮询等待进程存活（manager 初始化失败会自行退出）
+    for i in $(seq 1 50); do
+        if ! kill -0 "$MPID" 2>/dev/null; then
+            break
         fi
         sleep 0.2
     done
-
-    echo "Warning: proxy failed to start, gateway proxy unavailable"
-    rm -f "$PROXY_PID_FILE"
-    rm -f "$GATEWAY_SOCK"
+    if kill -0 "$MPID" 2>/dev/null; then
+        echo "transmission-manager started (PID: $MPID) on ${GATEWAY_SOCK}"
+        return 0
+    fi
+    echo "Warning: transmission-manager failed to start, WebUI unavailable"
+    rm -f "$MANAGER_PID_FILE"
     return 1
 }
 
-stop_proxy() {
-    if [ -f "$PROXY_PID_FILE" ]; then
-        local PROXY_PID=$(cat "$PROXY_PID_FILE" 2>/dev/null)
-        if kill -0 "$PROXY_PID" 2>/dev/null; then
-            kill "$PROXY_PID" 2>/dev/null || true
-            sleep 1
-            if kill -0 "$PROXY_PID" 2>/dev/null; then
-                kill -9 "$PROXY_PID" 2>/dev/null || true
+stop_manager() {
+    if [ -f "$MANAGER_PID_FILE" ]; then
+        local MPID=$(cat "$MANAGER_PID_FILE" 2>/dev/null)
+        if kill -0 "$MPID" 2>/dev/null; then
+            kill "$MPID" 2>/dev/null || true
+            for i in $(seq 1 10); do
+                if ! kill -0 "$MPID" 2>/dev/null; then
+                    break
+                fi
+                sleep 0.3
+            done
+            if kill -0 "$MPID" 2>/dev/null; then
+                kill -9 "$MPID" 2>/dev/null || true
             fi
         fi
-        rm -f "$PROXY_PID_FILE"
+        rm -f "$MANAGER_PID_FILE"
     fi
-    # 兜底：清理所有残留的同名代理进程，确保不留孤儿
-    pkill -f "gateway-proxy.py.*${GATEWAY_SOCK}" 2>/dev/null || true
-    rm -f "$GATEWAY_SOCK"
-    echo "proxy stopped"
+    # 兜底：清理残留 manager 进程（仅匹配本应用二进制路径）
+    pkill -f "${BIN_DIR}/transmission-manager" 2>/dev/null || true
+    echo "transmission-manager stopped"
 }
 
 start() {
@@ -231,7 +252,7 @@ start() {
             echo "警告：$PID_DIR 不可写，降级使用 /tmp/${APP_NAME}" >> "$LOG_FILE"
             PID_DIR="/tmp/${APP_NAME}"
             PID_FILE="${PID_DIR}/${APP_NAME}.pid"
-            PROXY_PID_FILE="${PID_DIR}/${APP_NAME}-proxy.pid"
+            MANAGER_PID_FILE="${PID_DIR}/${APP_NAME}-manager.pid"
             mkdir -p "$PID_DIR" 2>/dev/null || true
         fi
     fi
@@ -334,7 +355,7 @@ EOF
             PID=$(cat "$PID_FILE")
             if ps -p "$PID" > /dev/null 2>&1; then
                 echo "${APP_NAME} 启动成功 (PID: $PID)"
-                start_proxy
+                start_manager
                 return 0
             fi
         fi
@@ -344,7 +365,7 @@ EOF
 }
 
 stop() {
-    stop_proxy
+    stop_manager
 
     # 查找进程
     PID=""
@@ -411,6 +432,12 @@ status() {
 
     if [ "$RUNNING" = true ]; then
         echo "${APP_NAME} 正在运行 (PID: $PID)"
+        if [ -f "$MANAGER_PID_FILE" ]; then
+            MPID=$(cat "$MANAGER_PID_FILE")
+            if kill -0 "$MPID" 2>/dev/null; then
+                echo "transmission-manager 正在运行 (PID: $MPID)"
+            fi
+        fi
         return 0
     fi
 

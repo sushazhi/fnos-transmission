@@ -9,7 +9,7 @@ build.py - Transmission for fnOS 统一打包脚本（跨平台，替代 build.p
 特性:
     - 自动检测操作系统 (Windows/Linux)，选择对应的 fnpack 构建工具
     - 参数与 build.ps1 兼容
-    - 使用内置 zipfile / tarfile 解压，无需外部工具
+    - WebUI 由本地 Transmission-WebUI-for-fnOS 源码交叉编译（需 Go 工具链）
 """
 import argparse
 import json
@@ -18,9 +18,7 @@ import platform
 import shutil
 import subprocess
 import sys
-import tarfile
 import urllib.request
-import zipfile
 import re
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -30,8 +28,9 @@ MANIFEST_FILE = os.path.join(PROJECT_DIR, "manifest")
 FNPACK_BASE = "https://static2.fnnas.com/fnpack/fnpack-1.2.3"
 TRANSMISSION_RELEASES_URL = "https://api.github.com/repos/transmission/transmission/releases"
 GITHUB_RELEASES_URL = "https://github.com/sushazhi/fnos-transmission/releases/download"
-WEBUI_API_URL = "https://api.github.com/repos/sushazhi/transmission-web/releases/latest"
-WEBUI_BASE = "https://ghfast.top/https://github.com/sushazhi/transmission-web/releases/download"
+
+# WebUI 后端（transmission-manager）本地源码目录，默认与本仓库同级
+WEBUI_SRC_DEFAULT = os.path.join(PROJECT_DIR, "..", "Transmission-WebUI-for-fnOS")
 
 # 下载代理
 MAIN_PROXY = "https://gh-proxy.com/"
@@ -140,16 +139,6 @@ def copy_tree(src, dst):
             shutil.copy2(src, dst)
 
 
-def extract_zip(zip_path, dest_dir):
-    with zipfile.ZipFile(zip_path, "r") as z:
-        z.extractall(dest_dir)
-
-
-def extract_tar(tar_path, dest_dir):
-    with tarfile.open(tar_path, "r:*") as t:
-        t.extractall(dest_dir)
-
-
 def get_daemon_candidates(target_version, arch):
     return [
         f"transmission-daemon-{target_version}-{arch}",
@@ -166,11 +155,129 @@ def get_lib_candidates(target_version, arch):
     ]
 
 
+def build_manager_webui(src_dir, arch, out_path):
+    """从本地 Transmission-WebUI-for-fnOS 源码交叉编译 transmission-manager。
+
+    前端产物已内嵌在 backend/web/dist，只需 Go 交叉编译（CGO_ENABLED=0 静态链接）。
+    返回 (ok, error_message)。
+    """
+    backend_dir = os.path.join(src_dir, "backend")
+    cmd_dir = os.path.join(backend_dir, "cmd", "server")
+    if not os.path.isfile(os.path.join(cmd_dir, "main.go")):
+        return False, f"在 {src_dir} 中未找到 backend/cmd/server/main.go"
+    go_bin = shutil.which("go")
+    if not go_bin:
+        return False, "未找到 go 工具链（需安装 Go 或改用 --webui-binary 指定预编译二进制）"
+    env = dict(os.environ)
+    env["GOOS"] = "linux"
+    env["GOARCH"] = arch
+    env["CGO_ENABLED"] = "0"
+    log(f"  Cross-compiling transmission-manager (linux/{arch})...", "gray")
+    proc = subprocess.run(
+        [go_bin, "build", "-ldflags", "-s -w", "-o", out_path, "./cmd/server"],
+        cwd=backend_dir,
+        env=env,
+        capture_output=True,
+    )
+    if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+        err = proc.stderr.decode("utf-8", "replace")[-500:]
+        return False, f"Go 编译失败: {err}"
+    return True, ""
+
+
+def _mtime(path):
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0
+
+
+def _newest_mtime(paths):
+    """返回一组路径中最新的修改时间（目录递归取其内最新文件，不存在返回 0）。"""
+    newest = 0
+    for p in paths:
+        if os.path.isdir(p):
+            try:
+                for root, _dirs, files in os.walk(p):
+                    for f in files:
+                        newest = max(newest, _mtime(os.path.join(root, f)))
+            except OSError:
+                pass
+        else:
+            newest = max(newest, _mtime(p))
+    return newest
+
+
+def frontend_needs_build(webui_src):
+    """前端源码/配置是否比已构建的 backend/web/dist 更新（或 dist 缺失）。"""
+    dist = os.path.join(webui_src, "backend", "web", "dist")
+    if not os.path.isdir(dist) or not os.listdir(dist):
+        return True
+    src_paths = [
+        os.path.join(webui_src, "frontend", "src"),
+        os.path.join(webui_src, "frontend", "public"),
+        os.path.join(webui_src, "frontend", "vite.config.ts"),
+        os.path.join(webui_src, "frontend", "package.json"),
+        os.path.join(webui_src, "frontend", "pnpm-lock.yaml"),
+        os.path.join(webui_src, "frontend", "index.html"),
+    ]
+    return _newest_mtime(src_paths) > _newest_mtime([dist])
+
+
+def backend_needs_build(webui_src, arch, prebuilt):
+    """后端源码 / 内嵌前端产物是否比预编译二进制更新（或二进制缺失）。"""
+    if not os.path.isfile(prebuilt) or os.path.getsize(prebuilt) == 0:
+        return True
+    src_paths = [
+        os.path.join(webui_src, "backend", "cmd"),
+        os.path.join(webui_src, "backend", "internal"),
+        os.path.join(webui_src, "backend", "web", "dist"),
+        os.path.join(webui_src, "backend", "static.go"),
+        os.path.join(webui_src, "backend", "go.mod"),
+        os.path.join(webui_src, "backend", "go.sum"),
+    ]
+    return _newest_mtime(src_paths) > _mtime(prebuilt)
+
+
+def build_frontend(webui_src, log):
+    """从源码构建前端并复制到 backend/web/dist。成功返回 True。"""
+    frontend_dir = os.path.join(webui_src, "frontend")
+    pnpm_bin = shutil.which("pnpm")
+    if not pnpm_bin:
+        log("  ERROR: 未找到 pnpm（需安装 Node/pnpm 以构建前端）", "red")
+        return False
+    env = dict(os.environ)
+    env.setdefault("CI", "true")
+    proc = subprocess.run([pnpm_bin, "install", "--frozen-lockfile"], cwd=frontend_dir, env=env, capture_output=True)
+    if proc.returncode != 0:
+        log("  pnpm install --frozen-lockfile 失败，尝试普通安装...", "gray")
+        proc = subprocess.run([pnpm_bin, "install"], cwd=frontend_dir, env=env, capture_output=True)
+        if proc.returncode != 0:
+            err = (proc.stdout + proc.stderr).decode("utf-8", "replace")[-400:]
+            log(f"  ERROR: pnpm install 失败: {err}", "red")
+            return False
+    log("  Building frontend (pnpm build)...", "gray")
+    proc = subprocess.run([pnpm_bin, "build"], cwd=frontend_dir, env=env, capture_output=True)
+    if proc.returncode != 0:
+        err = (proc.stdout + proc.stderr).decode("utf-8", "replace")[-400:]
+        log(f"  ERROR: 前端构建失败: {err}", "red")
+        return False
+    dist = os.path.join(frontend_dir, "dist")
+    target = os.path.join(webui_src, "backend", "web", "dist")
+    if os.path.exists(target):
+        shutil.rmtree(target)
+    shutil.copytree(dist, target)
+    log("  Frontend built and copied to backend/web/dist", "green")
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description="Transmission for fnOS 统一打包脚本")
     parser.add_argument("--app-version", "-v", default="", help="应用版本号（默认读 manifest，覆盖输出文件名）")
     parser.add_argument("--transmission-version", "-t", default="", help="指定 transmission-daemon 版本")
     parser.add_argument("--arch", "-a", default="arm64", choices=["arm64", "amd64"], help="目标架构")
+    parser.add_argument("--webui-src", default="", help="Transmission-WebUI-for-fnOS 本地源码目录（默认 ../Transmission-WebUI-for-fnOS）")
+    parser.add_argument("--webui-binary", default="", help="直接使用指定路径的 linux transmission-manager 二进制，跳过源码编译")
     parser.add_argument("--list-versions", action="store_true", help="列出可用的 transmission 版本")
     args = parser.parse_args()
 
@@ -274,74 +381,64 @@ def main():
     if not lib_done:
         log(f"  Warning: libminiupnpc.so.17 not available for {arch} in release v{target_version}", "yellow")
 
-    # [5/6] WebUI
-    log("[5/6] Preparing WebUI...", "yellow")
-    webui_version = ""
-    try:
-        rel = fetch_json(WEBUI_API_URL)
-        webui_version = rel.get("tag_name", "").lstrip("v")
-        log(f"  Latest WebUI version: v{webui_version}", "gray")
-    except Exception:
-        log("  Warning: Failed to fetch WebUI version, using cached/default", "yellow")
-        webui_version = "0.0.9"
+    # [5/6] WebUI（transmission-manager 单二进制，Go+React 内嵌前端）
+    log("[5/6] Preparing WebUI (transmission-manager)...", "yellow")
+    manager_target = os.path.join(BUILD_DIR, "app", "bin", "transmission-manager")
+    os.makedirs(os.path.dirname(manager_target), exist_ok=True)
 
-    webui_file = f"transmission-web-v{webui_version}.zip"
-    webui_cache = os.path.join(BUILD_DIR, webui_file)
-    ui_target = os.path.join(BUILD_DIR, "app", "ui")
-    if os.path.exists(webui_cache) and os.path.getsize(webui_cache) > 0:
-        log("  Using cached WebUI", "green")
-    else:
-        log("  Downloading WebUI...", "yellow")
-        url = f"{WEBUI_BASE}/v{webui_version}/{webui_file}"
-        if not download_proxy(url, webui_cache, webui_file):
-            log("  ERROR: Failed to download WebUI", "red")
+    if args.webui_binary:
+        # 直接使用预编译二进制
+        if not os.path.isfile(args.webui_binary) or os.path.getsize(args.webui_binary) == 0:
+            log(f"  ERROR: 指定二进制不存在或为空: {args.webui_binary}", "red")
             sys.exit(1)
-
-    log("  Extracting WebUI...", "gray")
-    if webui_file.endswith(".zip"):
-        extract_zip(webui_cache, ui_target)
+        shutil.copy2(args.webui_binary, manager_target)
+        log(f"  Using provided binary: {args.webui_binary}", "green")
     else:
-        extract_tar(webui_cache, ui_target)
+        webui_src = os.path.abspath(args.webui_src.strip() or WEBUI_SRC_DEFAULT)
+        log(f"  WebUI source: {webui_src}", "gray")
+        prebuilt = os.path.join(webui_src, "backend", f"transmission-manager-linux-{arch}")
 
-    # transmission-web zip 通常解压出一个 transmission/ 目录，将其内容上移
-    trans_dir = os.path.join(ui_target, "transmission")
-    if os.path.isdir(trans_dir):
-        for item in os.listdir(trans_dir):
-            src = os.path.join(trans_dir, item)
-            shutil.move(src, ui_target)
-        shutil.rmtree(trans_dir, ignore_errors=True)
+        # 检测源码更新：前端/后端源码比现有产物新则自动重新构建，
+        # 避免修改代码后打包仍复用旧二进制（无需手动重编译 prebuilt）
+        frontend_stale = frontend_needs_build(webui_src)
+        backend_stale = backend_needs_build(webui_src, arch, prebuilt)
 
-    # 注入更新检查
-    log("  Injecting update check...", "gray")
-    index_html = os.path.join(ui_target, "index.html")
-    if os.path.exists(index_html):
-        with open(index_html, "r", encoding="utf-8", errors="replace") as f:
-            content = f.read()
-        inject = (
-            f"    <script>\n"
-            f"        window.TRANSMISSION_APP_VERSION = '{app_version}';\n"
-            f"    </script>\n"
-            f"    <script src=\"update-check.js\"></script>\n"
-        )
-        if "</body>" in content:
-            content = content.replace("</body>", inject + "</body>", 1)
-            with open(index_html, "w", encoding="utf-8") as f:
-                f.write(content)
-            log(f"  Update check injected (v{app_version})", "green")
+        if frontend_stale or backend_stale:
+            if frontend_stale:
+                log("  检测到前端源码更新，重新构建前端...", "yellow")
+                if not build_frontend(webui_src, log):
+                    sys.exit(1)
+                # 前端产物变更必须重新编译后端（embed 内嵌 dist）
+                backend_stale = True
+            if backend_stale:
+                log("  检测到后端源码更新，重新编译 transmission-manager...", "yellow")
+                ok, err = build_manager_webui(webui_src, arch, manager_target)
+                if not ok:
+                    log(f"  ERROR: 构建 transmission-manager 失败: {err}", "red")
+                    sys.exit(1)
+                log("  transmission-manager rebuilt", "green")
+            else:
+                shutil.copy2(prebuilt, manager_target)
+                log(f"  Using prebuilt binary: {os.path.basename(prebuilt)}", "green")
         else:
-            log("  Warning: Could not find </body> tag", "yellow")
-    else:
-        log(f"  Warning: index.html not found at {index_html}", "yellow")
+            if os.path.isfile(prebuilt) and os.path.getsize(prebuilt) > 0:
+                shutil.copy2(prebuilt, manager_target)
+                log(f"  Using prebuilt binary: {os.path.basename(prebuilt)}", "green")
+            else:
+                ok, err = build_manager_webui(webui_src, arch, manager_target)
+                if not ok:
+                    log(f"  ERROR: 构建 transmission-manager 失败: {err}", "red")
+                    sys.exit(1)
+                log("  transmission-manager built", "green")
+    if os.name != "nt":
+        os.chmod(manager_target, 0o755)
 
-    # 复制附加 UI 文件
-    for sub in ["config", "images", "update-check.js"]:
+    # 复制附加 UI 文件（桌面图标与 config）
+    ui_target = os.path.join(BUILD_DIR, "app", "ui")
+    for sub in ["config", "images"]:
         p = os.path.join(PROJECT_DIR, "app", "ui", sub)
         if os.path.exists(p):
             copy_tree(p, os.path.join(ui_target, sub))
-    # 复制 gateway-proxy.py
-    proxy_src = os.path.join(PROJECT_DIR, "app", "bin", "gateway-proxy.py")
-    if os.path.exists(proxy_src):
-        shutil.copy2(proxy_src, os.path.join(BUILD_DIR, "app", "bin", "gateway-proxy.py"))
     log("  WebUI ready", "green")
 
     # [6/6] 构建 fpk

@@ -5,8 +5,10 @@ APP_NAME="transmission-daemon"
 
 echo "正在清理 ${APP_NAME}..."
 
-# 清理临时文件
+# 清理临时文件（daemon / manager / 网关代理 PID）
 rm -f "${TRIM_PKGTMP}/${APP_NAME}.pid"
+rm -f "${TRIM_PKGTMP}/${APP_NAME}-manager.pid"
+rm -f "${TRIM_PKGTMP}/${APP_NAME}-proxy.pid"
 
 echo "${APP_NAME} 清理完成"
 exit 0

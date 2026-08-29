@@ -75,7 +75,7 @@
       },
       {
         "type": "tips",
-        "helpText": "📍 <b>端口说明：</b>通过 fnOS 统一网关访问时仍使用固定地址 /app/transmission，此端口用于本机内部 RPC 服务与直连访问。修改后保存将重启应用使配置生效"
+        "helpText": "📍 <b>端口说明：</b>通过 fnOS 统一网关访问 Web 界面时使用固定地址 /app/transmission（Web 服务端口固定为 8080，无需配置）。此处的端口为 Transmission RPC 服务端口，管理界面通过它连接下载服务。修改后保存将重启应用使配置生效"
       },
       {
         "type": "text",

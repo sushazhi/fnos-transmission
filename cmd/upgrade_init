@@ -96,15 +96,17 @@ else
 
     if [ -d "$DATA_DIR" ] && [ -n "$(find "$DATA_DIR" -mindepth 1 -maxdepth 1 2>/dev/null | head -1)" ]; then
         # 保护：备份目录绝不能位于数据目录内部（防止备份到自身造成数据损坏）
-        case "$BACKUP_DIR/" in
+        case "$SHARE_DIR/" in
             "$DATA_DIR/"*)
                 SHARE_DIR="/vol1/@appshare/transmission"
-                BACKUP_DIR="${SHARE_DIR}/.data_backup"
                 ;;
         esac
 
-        # 清理上次可能残留的备份，避免新旧数据混杂/嵌套
-        rm -rf "$BACKUP_DIR" 2>/dev/null || true
+        # 备份目录带时间戳：永不覆盖历史备份。
+        # 旧实现会先 rm -rf 旧备份再重建，一旦备份中断会导致备份与数据同时丢失。
+        STAMP=$(date +%Y%m%d_%H%M%S 2>/dev/null || echo "manual")
+        BACKUP_DIR="${SHARE_DIR}/.data_backup_${STAMP}"
+
         # 创建备份目录
         if ! mkdir -p "$BACKUP_DIR" 2>/dev/null; then
             error_exit "错误：无法创建备份目录，升级失败"
@@ -140,6 +142,15 @@ else
         echo "数据已成功备份到: $BACKUP_DIR"
         # 尝试写入备份信息文件（可能权限不足，但不影响升级）
         echo "BACKUP_DIR=$BACKUP_DIR" > "$BACKUP_INFO_FILE" 2>/dev/null || echo "警告：无法写入备份信息文件"
+
+        # 仅保留最近 5 份历史备份，避免占用过多空间（刚生成的备份不删除）
+        _all=$(ls -1d "${SHARE_DIR}"/.data_backup_* 2>/dev/null | sort)
+        _count=$(printf '%s\n' "$_all" | grep -c . 2>/dev/null)
+        if [ -n "$_count" ] && [ "$_count" -gt 5 ] 2>/dev/null; then
+            printf '%s\n' "$_all" | head -n $((_count - 5)) | while IFS= read -r _old; do
+                [ -n "$_old" ] && rm -rf "$_old" 2>/dev/null
+            done
+        fi
     else
         echo "无现有数据需要备份或数据目录为空"
     fi
