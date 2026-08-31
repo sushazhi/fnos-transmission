@@ -1,14 +1,11 @@
 # Transmission for fnOS 🚀
 
-🌐 **语言/Language**
-- [简体中文](README.md) | [English](README_EN.md)
-
 [![Transmission Version](https://img.shields.io/badge/Transmission-4.1.3-blue?style=flat-square)](https://github.com/transmission/transmission/releases)
-[![WebUI](https://img.shields.io/badge/WebUI-Go%2BReact-green?style=flat-square)](https://github.com/sushazhi/Transmission-WebUI-for-fnOS)
+[![WebUI](https://img.shields.io/badge/WebUI-Go%2BReact-green?style=flat-square)](https://github.com/sushazhi/trpanel)
 [![Platform](https://img.shields.io/badge/Platform-fnOS-green?style=flat-square)](https://www.fnnas.com/)
 [![License](https://img.shields.io/badge/License-GPL--2.0-blue?style=flat-square)](https://www.gnu.org/licenses/gpl-2.0.html)
 
-> 📌 **注意**：本应用支持 **ARM64 (aarch64)** 和 **amd64 (x86_64)** 架构，系统要求 **fnOS v1.1.19 及以上**。
+> 📌 **注意**：本应用支持 **ARM64 (aarch64)** 和 **amd64 (x86_64)** 架构，系统要求 **fnOS v1.1.3105 及以上**。
 
 ---
 
@@ -45,9 +42,8 @@
 | 组件 | 要求 |
 |------|------|
 | Python | 3.8+（Windows / Linux / macOS 通用） |
-| Go | 1.21+（交叉编译 WebUI 后端 `transmission-manager` 需要） |
 | transmission-daemon | 构建时自动从 [GitHub Releases](https://github.com/sushazhi/fnos-transmission/releases) 获取对应架构的编译产物 |
-| Transmission-WebUI-for-fnOS | 本地克隆源码，默认位于同级目录 `../Transmission-WebUI-for-fnOS` |
+| trpanel | 构建时自动从 [trpanel Releases](https://github.com/sushazhi/trpanel/releases) 获取对应架构的 WebUI 管理面板（Go+React 单二进制） |
 
 ### 一键构建
 
@@ -59,7 +55,7 @@ cd fnos-transmission
 python build.py
 
 # 指定应用版本
-python build.py --app-version 4.1.3.2.8
+python build.py --app-version 4.1.3.2.32
 
 # 指定架构构建（amd64）
 python build.py --arch amd64
@@ -67,10 +63,7 @@ python build.py --arch amd64
 # 指定 transmission-daemon 版本
 python build.py --transmission-version 4.1.3
 
-# 指定 WebUI 源码目录（默认 ../Transmission-WebUI-for-fnOS）
-python build.py --webui-src D:/fnos/Transmission-WebUI-for-fnOS
-
-# 直接使用预编译的 transmission-manager 二进制（跳过源码编译）
+# 直接使用预编译的 transmission-manager 二进制（跳过 trpanel 下载）
 python build.py --webui-binary ./transmission-manager-linux-arm64
 
 # 列出可用的 transmission 版本
@@ -84,13 +77,13 @@ python build.py --list-versions
 | `--app-version, -v` | 应用版本号（覆盖 manifest） | 读取 manifest |
 | `--transmission-version, -t` | 指定 transmission-daemon 版本 | 应用版本前 3 段 |
 | `--arch, -a` | 目标架构 `arm64` / `amd64` | `arm64` |
-| `--webui-src` | Transmission-WebUI-for-fnOS 本地源码目录 | `../Transmission-WebUI-for-fnOS` |
-| `--webui-binary` | 直接使用指定路径的 linux `transmission-manager` 二进制 | — |
+| `--webui-src` | （已弃用）Transmission-WebUI-for-fnOS 本地源码目录 | — |
+| `--webui-binary` | 直接使用指定路径的 linux `transmission-manager` 二进制，跳过 trpanel 下载 | — |
 | `--list-versions` | 列出可用的 transmission 版本 | — |
 
 **构建特性**：
 - **跨平台**：一份脚本在 Windows / Linux / macOS 通用，自动检测平台并选择对应的官方 `fnpack` 构建工具
-- **WebUI 内嵌**：从本地 `Transmission-WebUI-for-fnOS` 源码交叉编译 `transmission-manager`（Go + React 单二进制，前端内嵌，`CGO_ENABLED=0` 静态链接）；源码目录下已存在 `transmission-manager-linux-<arch>` 预编译产物时直接复用
+- **WebUI 内嵌**：从 [trpanel](https://github.com/sushazhi/trpanel) 最新 release 下载对应架构的 `trpanel` 单二进制（Go + React 内嵌前端），重命名为 `transmission-manager` 放入 `app/bin/`；也可用 `--webui-binary` 直接指定预编译二进制
 - 自动从 GitHub Releases 获取 `transmission-daemon` 与 `libminiupnpc.so.17`（含架构后缀 / 版本后缀 / 裸文件名多级回退）
 - 构建产物输出到项目根目录：`transmission-<版本>-<架构>.fpk`
 
@@ -106,8 +99,8 @@ GitHub Actions 会自动为 **arm64** 和 **amd64** 两种架构构建，产物�
 
 | 文件 | 说明 |
 |------|------|
-| `transmission-4.1.3.2.8-arm64.fpk` | fnOS 安装包（ARM64） |
-| `transmission-4.1.3.2.8-amd64.fpk` | fnOS 安装包（amd64） |
+| `transmission-4.1.3.2-arm64.fpk` | fnOS 安装包（ARM64） |
+| `transmission-4.1.3.2-amd64.fpk` | fnOS 安装包（amd64） |
 | `.local-build/` | 构建缓存目录（可删除） |
 
 ---
@@ -117,7 +110,7 @@ GitHub Actions 会自动为 **arm64** 和 **amd64** 两种架构构建，产物�
 | 项目 | 默认值 |
 |------|--------|
 | 访问地址 | fnOS 桌面图标（统一网关 `/app/transmission`） |
-| WebUI 服务 | 127.0.0.1:8080（transmission-manager，固定，仅本机） |
+| WebUI 服务 | transmission-manager 直连 fnOS 统一网关（`transmission.sock`） |
 | RPC 端口 | 9090 (可在应用设置中修改) |
 | 架构 | ARM64 (aarch64) / amd64 (x86_64) |
 
@@ -131,12 +124,11 @@ GitHub Actions 会自动为 **arm64** 和 **amd64** 两种架构构建，产物�
 
 ## 🔧 端口配置
 
-本应用采用 fnOS **统一网关**访问（桌面图标或固定网关地址 `/app/transmission`），默认情况下无需修改端口。Web 界面由 `transmission-manager` 提供（固定监听 `127.0.0.1:8080`，仅本机可达），界面通过 RPC 连接本机 `transmission-daemon`。
+本应用采用 fnOS **统一网关**访问（桌面图标或固定网关地址 `/app/transmission`），默认情况下无需修改端口。Web 界面由 `transmission-manager` 提供（直接监听 fnOS 统一网关 Unix socket，不对外暴露 TCP 端口），界面通过 RPC 连接本机 `transmission-daemon`。
 
 | 服务 | 地址 | 说明 |
 |------|------|------|
-| Web 界面 | `/app/transmission`（网关） | transmission-manager（Go + React 单二进制） |
-| Web 后端 | 127.0.0.1:8080 | 固定，不可修改 |
+| Web 界面 | `/app/transmission`（网关） | transmission-manager（Go + React 单二进制，直连网关 socket） |
 | Transmission RPC | 127.0.0.1:9090 | 可在**应用设置**中修改，管理界面自动跟随 |
 
 > 📌 **说明**：通过统一网关访问始终使用固定地址；应用设置中的端口对应 Transmission RPC 服务端口。
@@ -150,8 +142,7 @@ fnos-transmission/
 ├── app/                    # fnOS应用资源
 │   ├── bin/                # 构建产生的可执行文件
 │   │   ├── transmission-daemon  # Transmission守护进程
-│   │   ├── transmission-manager # WebUI 后端（Go+React 单二进制，内嵌前端）
-│   │   └── gateway-proxy.py     # fnOS 网关代理（前缀注入 / 免密 / fnOS 能力桥接）
+│   │   └── transmission-manager # WebUI 后端（trpanel，Go+React 单二进制，内嵌前端，直连 fnOS 统一网关）
 │   ├── lib/                # 构建产生的库文件
 │   │   └── libminiupnpc.so.*    # UPnP功能库文件
 │   └── ui/                  # 桌面图标与应用入口配置（前端已内嵌于 transmission-manager）
@@ -186,7 +177,12 @@ fnos-transmission/
 
 ## 🔄 升级数据保护
 
-升级时会自动备份和恢复数据到 `shares` 目录，确保配置和下载任务不丢失。
+升级时会自动备份和恢复数据到 `shares` 目录，确保配置和下载任务不丢失：
+
+- **备份触发**：只要数据目录存在即备份（含空目录结构），备份前强制停止 daemon 确保 `torrents/resume` 完整落盘
+- **时间戳备份**：备份目录带时间戳且永不覆盖历史备份，升级后仍可手动回滚
+- **恢复回退**：自动定位「最新且非空」的备份目录，跳过空备份防止恢复后种子仍为空
+- **失败容忍**：备份完整性校验失败时不终止升级（警告并保留备份），避免升级中断卡死
 
 ---
 
@@ -195,7 +191,7 @@ fnos-transmission/
 | 项目 | 版本 | 用途 | 许可证 |
 |------|------|------|--------|
 | [Transmission](https://github.com/transmission/transmission) | 4.1.3 | BitTorrent 客户端核心 | [GPL-2.0](https://www.gnu.org/licenses/gpl-2.0.html) |
-| [Transmission-WebUI-for-fnOS](https://github.com/sushazhi/Transmission-WebUI-for-fnOS) | master | WebUI 后端 + 前端（Go + React 单二进制） | 见仓库 |
+| [trpanel](https://github.com/sushazhi/trpanel) | latest | WebUI 管理面板（Go + React 单二进制，内嵌前端） | 见仓库 |
 
 ---
 
@@ -207,23 +203,16 @@ fnos-transmission/
 
 ---
 
-## 🧭 改进与规划建议
+## 🧭 开发者文档
 
-- [改进建议清单](docs/IMPROVEMENT_SUGGESTIONS.md) - 包含基础与进阶的稳定性、安全性、体验与工程化改进路线
+- [应用错误异常展示处理](docs/ERROR_HANDLING.md) - fnOS 生命周期脚本的错误处理与日志约定
 
 ---
 
 ## 📝 更新日志
 
-### v4.1.3.4
-- ✨ WebUI 更换为 [Transmission-WebUI-for-fnOS](https://github.com/sushazhi/Transmission-WebUI-for-fnOS)（Go + React）：WebSocket 实时推送、移动端优先、多服务器/多级筛选排序、RSS/自动文件管理
-- 🔧 管理面板固定监听 `127.0.0.1:8080`，仅通过 fnOS 统一网关访问，不对外暴露端口
-- 🔐 保留网关免密：面板经网关访问无需登录，内部凭证自动注入
-
-### v4.1.3.2.8
-- 🛠️ 修复升级时种子数据（torrents）丢失：备份路径多候选解析、恢复完整性校验、备份保留策略
-- 🔧 升级不再重置用户 RPC 绑定/认证设置
-- 🔐 RPC 认证开启后，通过 fnOS 统一网关访问仍免密（代理自动注入凭证）
+### v4.1.3.2.3
+- ✨ 管理面板升级为 [trpanel](https://github.com/sushazhi/trpanel)（Go+React 单二进制），构建脚本改为从 trpanel 最新 release 自动下载打包
 
 ### v4.1.3.2.1
 - ✨ 新增打开/选择下载目录（fnOS文件选择器）
@@ -233,4 +222,4 @@ fnos-transmission/
 
 ---
 
-感谢 [Transmission](https://github.com/transmission/transmission) 和 [Transmission-WebUI-for-fnOS](https://github.com/sushazhi/Transmission-WebUI-for-fnOS) 开源项目的支持。
+感谢 [Transmission](https://github.com/transmission/transmission) 和 [trpanel](https://github.com/sushazhi/trpanel) 开源项目的支持。

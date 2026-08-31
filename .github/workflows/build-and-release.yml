@@ -8,19 +8,16 @@ on:
   workflow_dispatch:
     inputs:
       transmission_version:
-        description: 'Transmission version (e.g., 4.1.1)'
+        description: 'Transmission version (e.g., 4.1.3)'
         required: false
-        default: '4.1.1'
-      webui_version:
-        description: 'WebUI version (e.g., 0.0.9 or "latest")'
+        default: ''
+      arch:
+        description: 'Target architecture (arm64 / amd64 / both)'
         required: false
-        default: 'latest'
+        default: 'both'
 
 permissions:
   contents: write
-
-env:
-  WEBUI_VERSION: "latest"
 
 jobs:
   build:
@@ -40,31 +37,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends \
-            build-essential \
-            cmake \
-            ninja-build \
-            pkg-config \
-            libssl-dev \
-            libcurl4-openssl-dev \
-            zlib1g-dev \
-            libminiupnpc-dev \
-            libappindicator3-dev \
-            git \
-            wget \
-            unzip
-
       - name: Read version from manifest
         id: version
         run: |
           APP_VERSION=$(grep "^version = " manifest | cut -d' ' -f3)
-          # Extract transmission version (first 3 parts)
-          # e.g., 4.1.0.1 -> 4.1.0, 4.1.1 -> 4.1.1
+          # Extract transmission version (first 3 parts), e.g., 4.1.3.2.32 -> 4.1.3
           TRANSMISSION_VERSION=$(echo "$APP_VERSION" | cut -d'.' -f1-3)
-          # Check if version is 3-part (e.g., 4.1.1) for release
+          # Check if version is 3-part (e.g., 4.1.3) for release
           VERSION_PARTS=$(echo "$APP_VERSION" | tr '.' '\n' | wc -l)
           if [ "$VERSION_PARTS" -eq 3 ]; then
             IS_RELEASE_VERSION="true"
@@ -81,310 +60,89 @@ jobs:
           echo "Transmission version: ${TRANSMISSION_VERSION}"
           echo "Is release version (3-part): ${IS_RELEASE_VERSION}"
 
-      - name: Get WebUI version
-        id: versions
+      - name: Prepare app structure
         run: |
-          VERSION="${{ env.TRANSMISSION_VERSION }}"
+          # 与 build.py [2/6] 对应：复制项目文件到构建根目录
+          # 注意：app/ui/config 与 app/ui/images 已在仓库中，无需复制
+          mkdir -p app/bin app/lib
+          cp -r cmd config wizard . 2>/dev/null || true
+          cp manifest ICON.PNG ICON_256.PNG . 2>/dev/null || true
+          echo "Project files copied"
 
-          if [ "${{ env.WEBUI_VERSION }}" = "latest" ]; then
-            WEBUI_VERSION=$(curl -s https://api.github.com/repos/sushazhi/transmission-web/releases/latest | sed -n 's/.*"tag_name": "v\([^"]*\)".*/\1/p')
-          else
-            WEBUI_VERSION="${{ env.WEBUI_VERSION }}"
-          fi
-
-          echo "TRANSMISSION_VERSION=${VERSION}" >> $GITHUB_OUTPUT
-          echo "WEBUI_VERSION=${WEBUI_VERSION}" >> $GITHUB_OUTPUT
-          echo "WEBUI_VERSION=${WEBUI_VERSION}" >> $GITHUB_ENV
-          echo "Building Transmission ${VERSION} with WebUI ${WEBUI_VERSION}"
-
-      - name: Try download prebuilt binaries from release
-        id: check_builds
+      - name: Download transmission-daemon and libminiupnpc
         run: |
           TRANSMISSION_VERSION="${{ env.TRANSMISSION_VERSION }}"
           ARCH="${{ matrix.arch }}"
-          BUILDS_DIR="/tmp/builds/${TRANSMISSION_VERSION}"
-          mkdir -p "$BUILDS_DIR"
+          BASE="https://github.com/sushazhi/fnos-transmission/releases/download/v${TRANSMISSION_VERSION}"
 
-          # Always try to download prebuilt binaries from release v{3-part-version}
-          echo "Checking for prebuilt binaries in release v${TRANSMISSION_VERSION}..."
-          
-          # Download arch-specific assets from the release
-          DAEMON_ASSET="transmission-daemon-${TRANSMISSION_VERSION}-${ARCH}"
-          LIB_ASSET="libminiupnpc.so.17-${TRANSMISSION_VERSION}-${ARCH}"
-          
-          if gh release download "v${TRANSMISSION_VERSION}" \
-            --pattern "${DAEMON_ASSET}" \
-            --dir "$BUILDS_DIR" \
-            --clobber 2>/dev/null; then
-            echo "Downloaded release asset: ${DAEMON_ASSET}"
-            mv "$BUILDS_DIR/${DAEMON_ASSET}" "$BUILDS_DIR/transmission-daemon"
-            echo "Found transmission-daemon"
-          else
-            echo "Asset ${DAEMON_ASSET} not found, trying legacy name..."
-            if gh release download "v${TRANSMISSION_VERSION}" \
-              --pattern "transmission-daemon-${TRANSMISSION_VERSION}" \
-              --dir "$BUILDS_DIR" \
-              --clobber 2>/dev/null; then
-              if [ -f "$BUILDS_DIR/transmission-daemon-${TRANSMISSION_VERSION}" ]; then
-                mv "$BUILDS_DIR/transmission-daemon-${TRANSMISSION_VERSION}" "$BUILDS_DIR/transmission-daemon"
-                echo "Found transmission-daemon (legacy)"
-              fi
+          # 依次尝试带架构名 -> 不带架构名
+          for name in "transmission-daemon-${TRANSMISSION_VERSION}-${ARCH}" "transmission-daemon-${TRANSMISSION_VERSION}" "transmission-daemon"; do
+            echo "Trying ${name}..."
+            if wget -q "${BASE}/${name}" -O app/bin/transmission-daemon 2>/dev/null && [ -s app/bin/transmission-daemon ]; then
+              echo "Downloaded ${name}"
+              break
             fi
-          fi
-
-          if gh release download "v${TRANSMISSION_VERSION}" \
-            --pattern "${LIB_ASSET}" \
-            --dir "$BUILDS_DIR" \
-            --clobber 2>/dev/null; then
-            echo "Downloaded release asset: ${LIB_ASSET}"
-            mv "$BUILDS_DIR/${LIB_ASSET}" "$BUILDS_DIR/libminiupnpc.so.17"
-            echo "Found libminiupnpc.so.17"
-          else
-            echo "Asset ${LIB_ASSET} not found, trying legacy name..."
-            if gh release download "v${TRANSMISSION_VERSION}" \
-              --pattern "libminiupnpc.so.17-${TRANSMISSION_VERSION}" \
-              --dir "$BUILDS_DIR" \
-              --clobber 2>/dev/null; then
-              if [ -f "$BUILDS_DIR/libminiupnpc.so.17-${TRANSMISSION_VERSION}" ]; then
-                mv "$BUILDS_DIR/libminiupnpc.so.17-${TRANSMISSION_VERSION}" "$BUILDS_DIR/libminiupnpc.so.17"
-                echo "Found libminiupnpc.so.17 (legacy)"
-              fi
-            fi
-          fi
-
-          # Check if we have the required binaries
-          if [ -f "$BUILDS_DIR/transmission-daemon" ]; then
-            echo "Prebuilt binaries found for version ${TRANSMISSION_VERSION}"
-            echo "use_prebuilt=true" >> $GITHUB_OUTPUT
-            echo "BUILDS_DIR=${BUILDS_DIR}" >> $GITHUB_OUTPUT
-            echo "BUILDS_DIR=${BUILDS_DIR}" >> $GITHUB_ENV
-          else
-            echo "No prebuilt binaries found for version ${TRANSMISSION_VERSION}"
-            echo "use_prebuilt=false" >> $GITHUB_OUTPUT
-          fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Download source and WebUI (parallel)
-        if: steps.check_builds.outputs.use_prebuilt != 'true'
-        run: |
-          echo "Downloading Transmission source and WebUI in parallel..."
-          echo ""
-
-          # Download in parallel
-          wget -q "https://github.com/transmission/transmission/releases/download/${{ steps.versions.outputs.TRANSMISSION_VERSION }}/transmission-${{ steps.versions.outputs.TRANSMISSION_VERSION }}.tar.xz" -O /tmp/transmission.tar.xz &
-          wget -q "https://github.com/sushazhi/transmission-web/releases/download/v${{ steps.versions.outputs.WEBUI_VERSION }}/transmission-web-v${{ steps.versions.outputs.WEBUI_VERSION }}.zip" -O /tmp/webui.zip &
-          wait
-
-          if [ ! -s /tmp/transmission.tar.xz ]; then
-            echo "ERROR: Failed to download Transmission source"
+          done
+          if [ ! -s app/bin/transmission-daemon ]; then
+            echo "ERROR: Failed to download transmission-daemon for ${ARCH} (release v${TRANSMISSION_VERSION})"
             exit 1
           fi
+          chmod +x app/bin/transmission-daemon
 
-          if [ ! -s /tmp/webui.zip ]; then
-            echo "ERROR: Failed to download transmission-web UI"
+          # libminiupnpc（可选）
+          for name in "libminiupnpc.so.17-${TRANSMISSION_VERSION}-${ARCH}" "libminiupnpc.so.17-${TRANSMISSION_VERSION}" "libminiupnpc.so.17"; do
+            echo "Trying ${name}..."
+            if wget -q "${BASE}/${name}" -O app/lib/libminiupnpc.so.17 2>/dev/null && [ -s app/lib/libminiupnpc.so.17 ]; then
+              echo "Downloaded ${name}"
+              break
+            fi
+          done
+          if [ ! -s app/lib/libminiupnpc.so.17 ]; then
+            echo "WARNING: libminiupnpc.so.17 not available for ${ARCH} in release v${TRANSMISSION_VERSION}"
+          fi
+
+      - name: Download trpanel (WebUI manager)
+        run: |
+          ARCH="${{ matrix.arch }}"
+          # 解析 trpanel 最新 release
+          TAG=$(curl -s https://api.github.com/repos/sushazhi/trpanel/releases/latest | sed -n 's/.*"tag_name": "v\([^"]*\)".*/\1/p')
+          if [ -z "$TAG" ]; then
+            echo "ERROR: Failed to resolve trpanel latest release"
             exit 1
           fi
-
-          echo "Downloaded Transmission: $(ls -lh /tmp/transmission.tar.xz | awk '{print $5}')"
-          echo "Downloaded WebUI: $(ls -lh /tmp/webui.zip | awk '{print $5}')"
-
-      - name: Extract source and WebUI
-        if: steps.check_builds.outputs.use_prebuilt != 'true'
-        run: |
-          mkdir -p /tmp/transmission-build
-          cd /tmp/transmission-build
-          tar -xf /tmp/transmission.tar.xz --strip-components=1
-
-          mkdir -p /tmp/webui
-          cd /tmp/webui
-          unzip -q /tmp/webui.zip
-
-          echo "Source structure:"
-          ls -la /tmp/transmission-build | head -10
-          echo "WebUI structure:"
-          ls -la /tmp/webui | head -10
-
-      - name: Build Transmission for ${{ matrix.arch }}
-        if: steps.check_builds.outputs.use_prebuilt != 'true'
-        run: |
-          cd /tmp/transmission-build
-          rm -rf build
-          mkdir -p build
-          cd build
-
-          # Configure for native build on the runner arch - use GCC to avoid clang-tidy crash
-          export CC=gcc CXX=g++
-          cmake .. \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER=gcc \
-            -DCMAKE_CXX_COMPILER=g++ \
-            -DRUN_CLANG_TIDY=OFF \
-            -DBUILD_SHARED_LIBS=ON \
-            -DENABLE_CLI=OFF \
-            -DENABLE_DAEMON=ON \
-            -DENABLE_WEB=OFF \
-            -DENABLE_GTK=OFF \
-            -DENABLE_QT=OFF \
-            -DENABLE_MAC=OFF \
-            -DENABLE_WIN=OFF \
-            -DENABLE_TESTS=OFF \
-            -DUSE_SYSTEMD=OFF \
-            -DENABLE_LIBUPNP=ON
-
-          echo ""
-          echo "CMake configured successfully"
-          ls -la
-
-      - name: Compile binaries
-        if: steps.check_builds.outputs.use_prebuilt != 'true'
-        run: |
-          cd /tmp/transmission-build/build
-
-          # Check available targets first
-          echo "Available targets:"
-          make help | grep -E "^  transmission" || true
-
-          # Build only transmission-daemon
-          make -j$(nproc) transmission-daemon
-
-          echo ""
-          echo "Build completed:"
-          ls -la daemon/ cli/ utils/ 2>/dev/null || find . -name "transmission-*" -type f -executable
-
-      - name: Prepare app structure
-        run: |
-          mkdir -p app/bin app/lib
-
-          # Copy built binaries or use prebuilt
-          if [ "${{ steps.check_builds.outputs.use_prebuilt }}" = "true" ]; then
-            echo "Using prebuilt binaries from release"
-            BUILDS_DIR="${{ env.BUILDS_DIR }}"
-
-            if [ -f "$BUILDS_DIR/transmission-daemon" ]; then
-              cp "$BUILDS_DIR/transmission-daemon" app/bin/
-            else
-              echo "ERROR: Prebuilt transmission-daemon not found in $BUILDS_DIR"
-              exit 1
-            fi
-
-            # Copy libminiupnpc if it exists
-            if [ -f "$BUILDS_DIR/libminiupnpc.so.17" ]; then
-              cp "$BUILDS_DIR/libminiupnpc.so.17" app/lib/
-            fi
-          else
-            echo "Using compiled binaries from source"
-
-            # Copy built binaries
-            if [ -f "/tmp/transmission-build/build/daemon/transmission-daemon" ]; then
-              cp /tmp/transmission-build/build/daemon/transmission-daemon app/bin/
-            elif [ -f "/tmp/transmission-build/build/transmission-daemon" ]; then
-              cp /tmp/transmission-build/build/transmission-daemon app/bin/
-            else
-              echo "ERROR: transmission-daemon not found"
-              find /tmp/transmission-build -name "transmission-daemon" -type f
-              exit 1
-            fi
-
-            chmod +x app/bin/*
-
-            # Copy libminiupnpc shared library for UPnP functionality
-            libminiupnpc=$(find /usr/lib -name "libminiupnpc.so.*" -type f 2>/dev/null | head -1)
-            if [ -n "$libminiupnpc" ] && [ -f "$libminiupnpc" ]; then
-              cp "$libminiupnpc" app/lib/
-              echo "Copied libminiupnpc: $(ls app/lib/)"
-            else
-              echo "WARNING: libminiupnpc not found, UPnP may not work"
-            fi
+          ASSET="trpanel-v${TAG}-linux-${ARCH}.tar.gz"
+          echo "Downloading ${ASSET}..."
+          wget -q "https://github.com/sushazhi/trpanel/releases/download/v${TAG}/${ASSET}" -O /tmp/trpanel.tar.gz
+          if [ ! -s /tmp/trpanel.tar.gz ]; then
+            echo "ERROR: Failed to download ${ASSET}"
+            exit 1
           fi
-
-          # Ensure WebUI is available (flat under app/ui, no extra 'web' subdir)
-          mkdir -p app/ui
-          if [ -d "/tmp/webui" ] && [ "$(ls -A /tmp/webui 2>/dev/null)" ]; then
-            echo "WebUI already extracted, copying..."
-            cp -r /tmp/webui/* app/ui/
-          else
-            echo "WebUI not found, downloading..."
-            if [ -z "$WEBUI_VERSION" ]; then
-              echo "Resolving latest WebUI version from API..."
-              WEBUI_VERSION=$(curl -s https://api.github.com/repos/sushazhi/transmission-web/releases/latest | sed -n 's/.*"tag_name": "v\([^"]*\)".*/\1/p')
-            fi
-
-            echo "Downloading WebUI v${WEBUI_VERSION}..."
-            wget -v "https://github.com/sushazhi/transmission-web/releases/download/v${WEBUI_VERSION}/transmission-web-v${WEBUI_VERSION}.zip" -O /tmp/webui.zip
-            if [ $? -ne 0 ] || [ ! -s /tmp/webui.zip ]; then
-              echo "ERROR: Failed to download WebUI v${WEBUI_VERSION}"
-              exit 1
-            fi
-
-            if [ -s /tmp/webui.zip ]; then
-              unzip -q /tmp/webui.zip -d /tmp/webui
-              cp -r /tmp/webui/* app/ui/
-              echo "WebUI v${WEBUI_VERSION} installed successfully"
-            else
-              echo "ERROR: Downloaded WebUI file is empty"
-              exit 1
-            fi
+          mkdir -p /tmp/trpanel-extract
+          tar -xzf /tmp/trpanel.tar.gz -C /tmp/trpanel-extract
+          # 定位 trpanel 可执行文件并重命名为 transmission-manager
+          TRPANEL_BIN=$(find /tmp/trpanel-extract -type f -name "trpanel" | head -1)
+          if [ -z "$TRPANEL_BIN" ] || [ ! -s "$TRPANEL_BIN" ]; then
+            echo "ERROR: trpanel binary not found in ${ASSET}"
+            exit 1
           fi
+          cp "$TRPANEL_BIN" app/bin/transmission-manager
+          chmod +x app/bin/transmission-manager
+          echo "trpanel v${TAG} extracted to transmission-manager"
 
-          # Remove transmission subfolder if it exists
-          rm -rf app/ui/transmission 2>/dev/null || true
-
-          # Copy gateway proxy script
-          if [ -f "app/bin/gateway-proxy.py" ]; then
-            echo "gateway-proxy.py already in app/bin"
-          elif [ -f "${{ github.workspace }}/app/bin/gateway-proxy.py" ]; then
-            cp "${{ github.workspace }}/app/bin/gateway-proxy.py" app/bin/
-            echo "Copied gateway-proxy.py"
-          fi
-
-          echo "App structure prepared:"
-          echo "Binaries:"
+      - name: Verify binaries
+        run: |
+          echo "Binary verification:"
+          file app/bin/transmission-daemon
+          file app/bin/transmission-manager
           ls -lh app/bin/
-          echo "Libraries:"
           ls -la app/lib/ 2>/dev/null || echo "(no libs)"
-
-      - name: Verify binary
-        run: |
-          BINARY="app/bin/transmission-daemon"
-          if [ ! -f "$BINARY" ]; then
+          if [ ! -s app/bin/transmission-daemon ]; then
             echo "ERROR: transmission-daemon not found"
             exit 1
           fi
-
-          echo "Binary verification:"
-          file "$BINARY"
-          ls -lh "$BINARY"
-
-          # Verify WebUI
-          if [ ! -f "app/ui/index.html" ]; then
-            echo "ERROR: WebUI index.html not found at app/ui/index.html"
+          if [ ! -s app/bin/transmission-manager ]; then
+            echo "ERROR: transmission-manager not found"
             exit 1
-          fi
-
-          echo "WebUI verification:"
-          ls -la app/ui/ | head -5
-
-      - name: Inject update check
-        run: |
-          echo "Injecting update check..."
-
-          # Read version from manifest
-          APP_VERSION=$(grep "^version = " manifest | cut -d' ' -f3)
-          echo "App version: ${APP_VERSION}"
-
-          # Inject version into index.html before </body>
-          if [ -f "app/ui/index.html" ]; then
-            # Use perl for reliable multiline replacement
-            perl -i -pe 'BEGIN{undef $/;} s|</body>|
-              <script>
-                  window.TRANSMISSION_APP_VERSION = '\'''"${APP_VERSION}"''\'';
-              </script>
-              <script src="update-check.js"></script>
-              </body>|sg' app/ui/index.html
-            echo "✅ Injected update check (v${APP_VERSION})"
-          else
-            echo "⚠️ WebUI index.html not found"
           fi
 
       - name: Download fnpack
@@ -419,27 +177,17 @@ jobs:
 
       - name: Build summary
         run: |
-          BUILD_TYPE="${{ steps.check_builds.outputs.use_prebuilt == 'true' && 'Prebuilt binaries (from release)' || 'Native compilation from source' }}"
-
           cat << EOF >> $GITHUB_STEP_SUMMARY
           ## Build Summary - Transmission for fnOS
 
           **Version:** ${{ env.APP_VERSION }}
-          **Transmission Version:** ${{ steps.versions.outputs.TRANSMISSION_VERSION }}
-          **WebUI Version:** ${{ steps.versions.outputs.WEBUI_VERSION }}
+          **Transmission Version:** ${{ env.TRANSMISSION_VERSION }}
           **Architecture:** ${{ matrix.arch }}
           **Is Release Version:** ${{ env.IS_RELEASE_VERSION }}
 
-          **Build Type:** ${BUILD_TYPE}
-
-          **Git Info:**
-          - Commit: \`${{ github.sha }}\`
-          - Branch: \`${{ github.ref_name }}\`
-          - Triggered by: ${{ github.event_name }}
-
           **Components:**
-          - Transmission daemon: ${{ matrix.arch }} binary
-          - WebUI: transmission-web v${{ steps.versions.outputs.WEBUI_VERSION }}
+          - Transmission daemon: ${{ matrix.arch }} binary (from release v${{ env.TRANSMISSION_VERSION }})
+          - WebUI: trpanel (Go+React 单二进制) ${{ matrix.arch }}
 
           **Build Artifacts:**
           - Package: \`${PACKAGE_NAME}\`
@@ -469,18 +217,5 @@ jobs:
 
           # Upload package (with clobber in case another job raced us)
           gh release upload "$RELEASE_TAG" "${PACKAGE}" --clobber || true
-
-          # Upload prebuilt binaries as arch-suffixed release assets so they can be reused
-          if [ "${{ steps.check_builds.outputs.use_prebuilt }}" != "true" ]; then
-            echo "Uploading $ARCH prebuilt binaries..."
-            gh release upload "$RELEASE_TAG" \
-              "app/bin/transmission-daemon#transmission-daemon-${TRANSMISSION_VERSION}-${ARCH}" \
-              --clobber || echo "WARNING: Failed to upload transmission-daemon"
-            if [ -f "app/lib/libminiupnpc.so.17" ]; then
-              gh release upload "$RELEASE_TAG" \
-                "app/lib/libminiupnpc.so.17#libminiupnpc.so.17-${TRANSMISSION_VERSION}-${ARCH}" \
-                --clobber || echo "WARNING: Failed to upload libminiupnpc.so.17"
-            fi
-          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

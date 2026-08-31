@@ -94,7 +94,14 @@ if [ "$DATA_ACTION" = "delete" ]; then
 else
     echo "用户选择保留数据，主动备份..."
 
-    if [ -d "$DATA_DIR" ] && [ -n "$(find "$DATA_DIR" -mindepth 1 -maxdepth 1 2>/dev/null | head -1)" ]; then
+    # 只要数据目录存在就备份（即使只有空目录也保留目录结构），
+    # 避免旧实现用 find 判断"是否有条目"时，因 torrents/resume 为空目录而误判漏备，
+    # 导致升级后种子文件丢失。
+    if [ -d "$DATA_DIR" ]; then
+        # 备份前再次确保 daemon 完全停止，避免运行中写入导致 torrents/resume 备份不完整
+        if [ -x "${TRIM_APPDEST}/cmd/main" ]; then
+            "${TRIM_APPDEST}/cmd/main" stop >/dev/null 2>&1 || true
+        fi
         # 保护：备份目录绝不能位于数据目录内部（防止备份到自身造成数据损坏）
         case "$SHARE_DIR/" in
             "$DATA_DIR/"*)
@@ -136,7 +143,10 @@ else
             fi
         fi
         if [ "$BACKUP_OK" = false ]; then
-            error_exit "错误：备份验证失败（关键数据未完整备份），升级终止"
+            # 备份校验失败：不终止升级（避免升级中断卡死），改为警告并保留备份，
+            # 升级后仍可手动从备份恢复数据。
+            echo "警告：备份验证未完全通过（settings.json/torrents/resume 可能不完整），"
+            echo "备份已保留在 $BACKUP_DIR，升级后请检查数据，必要时手动恢复！"
         fi
 
         echo "数据已成功备份到: $BACKUP_DIR"

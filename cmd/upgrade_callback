@@ -42,10 +42,16 @@ if [ -f "${SHARE_DIR}/.backup_info" ]; then
         BACKUP_DIR="$_info_backup"
     fi
 fi
-# 回退：若信息文件缺失或指向的备份不存在，取最新的时间戳备份目录
+# 回退：若信息文件缺失、指向的备份不存在或为空，取最新的「非空」时间戳备份目录。
+# 关键：必须跳过空备份，否则恢复后 torrents/resume 仍为空，导致种子丢失。
 if [ ! -d "$BACKUP_DIR" ] || [ -z "$(ls -A "$BACKUP_DIR" 2>/dev/null)" ]; then
-    _latest=$(ls -1d "${SHARE_DIR}"/.data_backup_* 2>/dev/null | sort | tail -1)
-    if [ -n "$_latest" ] && [ -d "$_latest" ]; then
+    _latest=""
+    for _cand in $(ls -1d "${SHARE_DIR}"/.data_backup_* 2>/dev/null | sort); do
+        if [ -d "$_cand" ] && [ -n "$(ls -A "$_cand" 2>/dev/null)" ]; then
+            _latest="$_cand"
+        fi
+    done
+    if [ -n "$_latest" ]; then
         BACKUP_DIR="$_latest"
     fi
 fi

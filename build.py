@@ -29,6 +29,10 @@ FNPACK_BASE = "https://static2.fnnas.com/fnpack/fnpack-1.2.3"
 TRANSMISSION_RELEASES_URL = "https://api.github.com/repos/transmission/transmission/releases"
 GITHUB_RELEASES_URL = "https://github.com/sushazhi/fnos-transmission/releases/download"
 
+# trpanel（Transmission 管理面板，Go+React 单二进制）发布仓库
+TRPANEL_RELEASES_URL = "https://api.github.com/repos/sushazhi/trpanel/releases/latest"
+TRPANEL_DOWNLOAD_BASE = "https://github.com/sushazhi/trpanel/releases/download"
+
 # WebUI 后端（transmission-manager）本地源码目录，默认与本仓库同级
 WEBUI_SRC_DEFAULT = os.path.join(PROJECT_DIR, "..", "Transmission-WebUI-for-fnOS")
 
@@ -155,6 +159,68 @@ def get_lib_candidates(target_version, arch):
     ]
 
 
+def download_trpanel(arch, out_path):
+    """从 sushazhi/trpanel 最新 release 下载对应架构的 tar.gz 并解压出 trpanel 二进制。
+
+    产物命名：trpanel-v<ver>-linux-<arch>.tar.gz，解压后为单个可执行文件 trpanel。
+    返回 (ok, error_message)。
+    """
+    try:
+        rel = fetch_json(TRPANEL_RELEASES_URL)
+    except Exception as e:
+        return False, f"获取 trpanel 最新 release 失败: {e}"
+    tag = rel.get("tag_name", "").lstrip("v")
+    if not tag:
+        return False, "trpanel release 缺少 tag_name"
+    asset_name = f"trpanel-v{tag}-linux-{arch}.tar.gz"
+    asset_url = None
+    for a in rel.get("assets", []):
+        if a.get("name") == asset_name:
+            asset_url = a.get("browser_download_url")
+            break
+    if not asset_url:
+        names = [a.get("name") for a in rel.get("assets", [])]
+        return False, f"trpanel release v{tag} 中未找到 {asset_name}（可用: {names}）"
+
+    tarball = os.path.join(BUILD_DIR, asset_name)
+    if os.path.exists(tarball) and os.path.getsize(tarball) > 0:
+        log(f"  Using cached tarball: {asset_name}", "green")
+    else:
+        log(f"  Downloading trpanel v{tag} ({asset_name})...", "gray")
+        if not download_proxy(asset_url, tarball, asset_name):
+            return False, f"下载 {asset_name} 失败"
+
+    # 解压 tar.gz，取出 trpanel 二进制
+    extract_dir = os.path.join(BUILD_DIR, f"trpanel-extract-{arch}")
+    shutil.rmtree(extract_dir, ignore_errors=True)
+    os.makedirs(extract_dir, exist_ok=True)
+    try:
+        import tarfile
+        with tarfile.open(tarball, "r:gz") as tf:
+            # Python 3.14+ 默认过滤 tar 归档，显式指定 data 过滤器以兼容旧版本
+            try:
+                tf.extractall(extract_dir, filter="data")
+            except TypeError:
+                tf.extractall(extract_dir)
+    except Exception as e:
+        return False, f"解压 {asset_name} 失败: {e}"
+
+    # 在解压目录中定位 trpanel 可执行文件
+    found = None
+    for root, _dirs, files in os.walk(extract_dir):
+        for f in files:
+            if f == "trpanel":
+                found = os.path.join(root, f)
+                break
+        if found:
+            break
+    if not found or not os.path.isfile(found) or os.path.getsize(found) == 0:
+        return False, f"解压后未找到 trpanel 可执行文件（{asset_name}）"
+    shutil.copy2(found, out_path)
+    log(f"  trpanel v{tag} extracted to {os.path.basename(out_path)}", "green")
+    return True, ""
+
+
 def build_manager_webui(src_dir, arch, out_path):
     """从本地 Transmission-WebUI-for-fnOS 源码交叉编译 transmission-manager。
 
@@ -276,8 +342,8 @@ def main():
     parser.add_argument("--app-version", "-v", default="", help="应用版本号（默认读 manifest，覆盖输出文件名）")
     parser.add_argument("--transmission-version", "-t", default="", help="指定 transmission-daemon 版本")
     parser.add_argument("--arch", "-a", default="arm64", choices=["arm64", "amd64"], help="目标架构")
-    parser.add_argument("--webui-src", default="", help="Transmission-WebUI-for-fnOS 本地源码目录（默认 ../Transmission-WebUI-for-fnOS）")
-    parser.add_argument("--webui-binary", default="", help="直接使用指定路径的 linux transmission-manager 二进制，跳过源码编译")
+    parser.add_argument("--webui-src", default="", help="（已弃用）Transmission-WebUI-for-fnOS 本地源码目录，现默认从 sushazhi/trpanel 最新 release 下载")
+    parser.add_argument("--webui-binary", default="", help="直接使用指定路径的 linux transmission-manager 二进制，跳过 trpanel 下载")
     parser.add_argument("--list-versions", action="store_true", help="列出可用的 transmission 版本")
     args = parser.parse_args()
 
@@ -381,8 +447,8 @@ def main():
     if not lib_done:
         log(f"  Warning: libminiupnpc.so.17 not available for {arch} in release v{target_version}", "yellow")
 
-    # [5/6] WebUI（transmission-manager 单二进制，Go+React 内嵌前端）
-    log("[5/6] Preparing WebUI (transmission-manager)...", "yellow")
+    # [5/6] WebUI（trpanel 单二进制，Go+React 内嵌前端，从 sushazhi/trpanel 最新 release 下载）
+    log("[5/6] Preparing WebUI (trpanel)...", "yellow")
     manager_target = os.path.join(BUILD_DIR, "app", "bin", "transmission-manager")
     os.makedirs(os.path.dirname(manager_target), exist_ok=True)
 
@@ -394,42 +460,12 @@ def main():
         shutil.copy2(args.webui_binary, manager_target)
         log(f"  Using provided binary: {args.webui_binary}", "green")
     else:
-        webui_src = os.path.abspath(args.webui_src.strip() or WEBUI_SRC_DEFAULT)
-        log(f"  WebUI source: {webui_src}", "gray")
-        prebuilt = os.path.join(webui_src, "backend", f"transmission-manager-linux-{arch}")
-
-        # 检测源码更新：前端/后端源码比现有产物新则自动重新构建，
-        # 避免修改代码后打包仍复用旧二进制（无需手动重编译 prebuilt）
-        frontend_stale = frontend_needs_build(webui_src)
-        backend_stale = backend_needs_build(webui_src, arch, prebuilt)
-
-        if frontend_stale or backend_stale:
-            if frontend_stale:
-                log("  检测到前端源码更新，重新构建前端...", "yellow")
-                if not build_frontend(webui_src, log):
-                    sys.exit(1)
-                # 前端产物变更必须重新编译后端（embed 内嵌 dist）
-                backend_stale = True
-            if backend_stale:
-                log("  检测到后端源码更新，重新编译 transmission-manager...", "yellow")
-                ok, err = build_manager_webui(webui_src, arch, manager_target)
-                if not ok:
-                    log(f"  ERROR: 构建 transmission-manager 失败: {err}", "red")
-                    sys.exit(1)
-                log("  transmission-manager rebuilt", "green")
-            else:
-                shutil.copy2(prebuilt, manager_target)
-                log(f"  Using prebuilt binary: {os.path.basename(prebuilt)}", "green")
-        else:
-            if os.path.isfile(prebuilt) and os.path.getsize(prebuilt) > 0:
-                shutil.copy2(prebuilt, manager_target)
-                log(f"  Using prebuilt binary: {os.path.basename(prebuilt)}", "green")
-            else:
-                ok, err = build_manager_webui(webui_src, arch, manager_target)
-                if not ok:
-                    log(f"  ERROR: 构建 transmission-manager 失败: {err}", "red")
-                    sys.exit(1)
-                log("  transmission-manager built", "green")
+        # 从 trpanel 最新 release 下载对应架构二进制（解压后重命名为 transmission-manager，
+        # 保持 cmd/main 的 MANAGER_BIN 路径与环境变量兼容，无需改动启动脚本）
+        ok, err = download_trpanel(arch, manager_target)
+        if not ok:
+            log(f"  ERROR: 获取 trpanel 失败: {err}", "red")
+            sys.exit(1)
     if os.name != "nt":
         os.chmod(manager_target, 0o755)
 
