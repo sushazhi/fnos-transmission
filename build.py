@@ -4,12 +4,15 @@ build.py - Transmission for fnOS 统一打包脚本（跨平台，替代 build.p
 
 用法:
     python build.py [--app-version 4.1.3.2.1] [--transmission-version 4.1.3] [--arch arm64|amd64]
+    python build.py --trpanel-src ../trpanel            # 从本地 trpanel 源码构建 WebUI
+    python build.py --trpanel-src ../trpanel --skip-frontend   # 复用已构建的前端产物
     python build.py --list-versions
 
 特性:
     - 自动检测操作系统 (Windows/Linux)，选择对应的 fnpack 构建工具
     - 参数与 build.ps1 兼容
-    - WebUI 由本地 Transmission-WebUI-for-fnOS 源码交叉编译（需 Go 工具链）
+    - WebUI (trpanel) 默认从 sushazhi/trpanel 最新 release 下载，无需本地 Go/Node 工具链
+    - 也可用 --trpanel-src 从本地源码构建（需 Go + pnpm 11+），或 --webui-binary 指定预编译二进制
 """
 import argparse
 import json
@@ -19,7 +22,6 @@ import shutil
 import subprocess
 import sys
 import urllib.request
-import re
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 BUILD_DIR = os.path.join(PROJECT_DIR, ".local-build")
@@ -31,10 +33,6 @@ GITHUB_RELEASES_URL = "https://github.com/sushazhi/fnos-transmission/releases/do
 
 # trpanel（Transmission 管理面板，Go+React 单二进制）发布仓库
 TRPANEL_RELEASES_URL = "https://api.github.com/repos/sushazhi/trpanel/releases/latest"
-TRPANEL_DOWNLOAD_BASE = "https://github.com/sushazhi/trpanel/releases/download"
-
-# WebUI 后端（transmission-manager）本地源码目录，默认与本仓库同级
-WEBUI_SRC_DEFAULT = os.path.join(PROJECT_DIR, "..", "Transmission-WebUI-for-fnOS")
 
 # 下载代理
 MAIN_PROXY = "https://gh-proxy.com/"
@@ -221,120 +219,88 @@ def download_trpanel(arch, out_path):
     return True, ""
 
 
-def build_manager_webui(src_dir, arch, out_path):
-    """从本地 Transmission-WebUI-for-fnOS 源码交叉编译 transmission-manager。
+def _run_cmd(cmd, cwd=None, env=None):
+    """运行子进程命令。Windows 下 pnpm 等是 .cmd 包装脚本，需经 shell 才能执行。"""
+    if os.name == "nt" and str(cmd[0]).lower().endswith((".cmd", ".bat")):
+        return subprocess.run(subprocess.list2cmdline(cmd), shell=True, cwd=cwd, env=env, capture_output=True)
+    return subprocess.run(cmd, cwd=cwd, env=env, capture_output=True)
 
-    前端产物已内嵌在 backend/web/dist，只需 Go 交叉编译（CGO_ENABLED=0 静态链接）。
+
+def _tail(proc, n=500):
+    """截取子进程输出的末尾，便于在报错时展示关键日志。"""
+    out = (proc.stdout or b"") + (proc.stderr or b"")
+    return out.decode("utf-8", "replace")[-n:]
+
+
+def build_trpanel_from_src(src_dir, arch, out_path, skip_frontend=False):
+    """从本地 trpanel 源码目录构建 linux trpanel 二进制。
+
+    流程与 trpanel 官方 Dockerfile 一致：
+      1) frontend: pnpm install --frozen-lockfile && pnpm build  -> frontend/dist
+      2) 复制 frontend/dist -> backend/web/dist（Go 侧通过 //go:embed web/dist 内嵌）
+      3) backend: CGO_ENABLED=0 GOOS=linux GOARCH=<arch> go build -trimpath ./cmd/server
+
+    skip_frontend=True 时跳过第 1 步，复用 frontend/dist（优先）或 backend/web/dist 现有产物。
     返回 (ok, error_message)。
     """
     backend_dir = os.path.join(src_dir, "backend")
-    cmd_dir = os.path.join(backend_dir, "cmd", "server")
-    if not os.path.isfile(os.path.join(cmd_dir, "main.go")):
-        return False, f"在 {src_dir} 中未找到 backend/cmd/server/main.go"
+    frontend_dir = os.path.join(src_dir, "frontend")
+    web_dist = os.path.join(backend_dir, "web", "dist")
+
+    if not os.path.isfile(os.path.join(backend_dir, "cmd", "server", "main.go")):
+        return False, f"在 {src_dir} 中未找到 backend/cmd/server/main.go（不是有效的 trpanel 源码目录）"
+
+    # ---- 前端（可选跳过，复用已构建产物）----
+    if skip_frontend:
+        src_dist = os.path.join(frontend_dir, "dist")
+        if os.path.isdir(src_dist) and os.listdir(src_dist):
+            shutil.rmtree(web_dist, ignore_errors=True)
+            shutil.copytree(src_dist, web_dist)
+            log("  Using existing frontend/dist (skipped pnpm build)", "green")
+        elif os.path.isdir(web_dist) and os.listdir(web_dist):
+            log("  Using existing backend/web/dist (skipped pnpm build)", "green")
+        else:
+            return False, "--skip-frontend 但未找到前端产物（frontend/dist 与 backend/web/dist 均为空或不存在）"
+    else:
+        pnpm_bin = shutil.which("pnpm")
+        if not pnpm_bin:
+            return False, "未找到 pnpm（trpanel 前端需 pnpm 11+；也可用 --skip-frontend 复用已有产物）"
+        env = dict(os.environ)
+        env.setdefault("CI", "true")
+        log("  Installing frontend deps (pnpm install --frozen-lockfile)...", "gray")
+        proc = _run_cmd([pnpm_bin, "install", "--frozen-lockfile"], cwd=frontend_dir, env=env)
+        if proc.returncode != 0:
+            log("  --frozen-lockfile 失败，回退 pnpm install...", "gray")
+            proc = _run_cmd([pnpm_bin, "install"], cwd=frontend_dir, env=env)
+            if proc.returncode != 0:
+                return False, "pnpm install 失败: " + _tail(proc)
+        log("  Building frontend (pnpm build)...", "gray")
+        proc = _run_cmd([pnpm_bin, "build"], cwd=frontend_dir, env=env)
+        if proc.returncode != 0:
+            return False, "pnpm build 失败: " + _tail(proc)
+        src_dist = os.path.join(frontend_dir, "dist")
+        if not (os.path.isdir(src_dist) and os.listdir(src_dist)):
+            return False, f"前端构建未产出产物: {src_dist}"
+        shutil.rmtree(web_dist, ignore_errors=True)
+        shutil.copytree(src_dist, web_dist)
+        log("  Frontend built into backend/web/dist", "green")
+
+    # ---- 后端（Go 交叉编译，静态链接）----
     go_bin = shutil.which("go")
     if not go_bin:
-        return False, "未找到 go 工具链（需安装 Go 或改用 --webui-binary 指定预编译二进制）"
+        return False, "未找到 go 工具链"
     env = dict(os.environ)
     env["GOOS"] = "linux"
     env["GOARCH"] = arch
     env["CGO_ENABLED"] = "0"
-    log(f"  Cross-compiling transmission-manager (linux/{arch})...", "gray")
-    proc = subprocess.run(
-        [go_bin, "build", "-ldflags", "-s -w", "-o", out_path, "./cmd/server"],
-        cwd=backend_dir,
-        env=env,
-        capture_output=True,
+    log(f"  Cross-compiling trpanel (linux/{arch})...", "gray")
+    proc = _run_cmd(
+        [go_bin, "build", "-trimpath", "-ldflags", "-s -w", "-o", out_path, "./cmd/server"],
+        cwd=backend_dir, env=env,
     )
     if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
-        err = proc.stderr.decode("utf-8", "replace")[-500:]
-        return False, f"Go 编译失败: {err}"
+        return False, "Go 编译失败: " + _tail(proc)
     return True, ""
-
-
-def _mtime(path):
-    try:
-        return os.path.getmtime(path)
-    except OSError:
-        return 0
-
-
-def _newest_mtime(paths):
-    """返回一组路径中最新的修改时间（目录递归取其内最新文件，不存在返回 0）。"""
-    newest = 0
-    for p in paths:
-        if os.path.isdir(p):
-            try:
-                for root, _dirs, files in os.walk(p):
-                    for f in files:
-                        newest = max(newest, _mtime(os.path.join(root, f)))
-            except OSError:
-                pass
-        else:
-            newest = max(newest, _mtime(p))
-    return newest
-
-
-def frontend_needs_build(webui_src):
-    """前端源码/配置是否比已构建的 backend/web/dist 更新（或 dist 缺失）。"""
-    dist = os.path.join(webui_src, "backend", "web", "dist")
-    if not os.path.isdir(dist) or not os.listdir(dist):
-        return True
-    src_paths = [
-        os.path.join(webui_src, "frontend", "src"),
-        os.path.join(webui_src, "frontend", "public"),
-        os.path.join(webui_src, "frontend", "vite.config.ts"),
-        os.path.join(webui_src, "frontend", "package.json"),
-        os.path.join(webui_src, "frontend", "pnpm-lock.yaml"),
-        os.path.join(webui_src, "frontend", "index.html"),
-    ]
-    return _newest_mtime(src_paths) > _newest_mtime([dist])
-
-
-def backend_needs_build(webui_src, arch, prebuilt):
-    """后端源码 / 内嵌前端产物是否比预编译二进制更新（或二进制缺失）。"""
-    if not os.path.isfile(prebuilt) or os.path.getsize(prebuilt) == 0:
-        return True
-    src_paths = [
-        os.path.join(webui_src, "backend", "cmd"),
-        os.path.join(webui_src, "backend", "internal"),
-        os.path.join(webui_src, "backend", "web", "dist"),
-        os.path.join(webui_src, "backend", "static.go"),
-        os.path.join(webui_src, "backend", "go.mod"),
-        os.path.join(webui_src, "backend", "go.sum"),
-    ]
-    return _newest_mtime(src_paths) > _mtime(prebuilt)
-
-
-def build_frontend(webui_src, log):
-    """从源码构建前端并复制到 backend/web/dist。成功返回 True。"""
-    frontend_dir = os.path.join(webui_src, "frontend")
-    pnpm_bin = shutil.which("pnpm")
-    if not pnpm_bin:
-        log("  ERROR: 未找到 pnpm（需安装 Node/pnpm 以构建前端）", "red")
-        return False
-    env = dict(os.environ)
-    env.setdefault("CI", "true")
-    proc = subprocess.run([pnpm_bin, "install", "--frozen-lockfile"], cwd=frontend_dir, env=env, capture_output=True)
-    if proc.returncode != 0:
-        log("  pnpm install --frozen-lockfile 失败，尝试普通安装...", "gray")
-        proc = subprocess.run([pnpm_bin, "install"], cwd=frontend_dir, env=env, capture_output=True)
-        if proc.returncode != 0:
-            err = (proc.stdout + proc.stderr).decode("utf-8", "replace")[-400:]
-            log(f"  ERROR: pnpm install 失败: {err}", "red")
-            return False
-    log("  Building frontend (pnpm build)...", "gray")
-    proc = subprocess.run([pnpm_bin, "build"], cwd=frontend_dir, env=env, capture_output=True)
-    if proc.returncode != 0:
-        err = (proc.stdout + proc.stderr).decode("utf-8", "replace")[-400:]
-        log(f"  ERROR: 前端构建失败: {err}", "red")
-        return False
-    dist = os.path.join(frontend_dir, "dist")
-    target = os.path.join(webui_src, "backend", "web", "dist")
-    if os.path.exists(target):
-        shutil.rmtree(target)
-    shutil.copytree(dist, target)
-    log("  Frontend built and copied to backend/web/dist", "green")
-    return True
 
 
 def main():
@@ -342,8 +308,9 @@ def main():
     parser.add_argument("--app-version", "-v", default="", help="应用版本号（默认读 manifest，覆盖输出文件名）")
     parser.add_argument("--transmission-version", "-t", default="", help="指定 transmission-daemon 版本")
     parser.add_argument("--arch", "-a", default="arm64", choices=["arm64", "amd64"], help="目标架构")
-    parser.add_argument("--webui-src", default="", help="（已弃用）Transmission-WebUI-for-fnOS 本地源码目录，现默认从 sushazhi/trpanel 最新 release 下载")
-    parser.add_argument("--webui-binary", default="", help="直接使用指定路径的 linux transmission-manager 二进制，跳过 trpanel 下载")
+    parser.add_argument("--trpanel-src", default="", help="从本地 trpanel 源码目录构建 WebUI（需 Go + pnpm 11+），优先级高于 --webui-binary 与 release 下载")
+    parser.add_argument("--skip-frontend", action="store_true", help="配合 --trpanel-src：跳过前端 pnpm 构建，复用已有 frontend/dist 或 backend/web/dist")
+    parser.add_argument("--webui-binary", default="", help="直接使用指定路径的 linux trpanel 二进制，跳过 trpanel 下载")
     parser.add_argument("--list-versions", action="store_true", help="列出可用的 transmission 版本")
     args = parser.parse_args()
 
@@ -449,10 +416,17 @@ def main():
 
     # [5/6] WebUI（trpanel 单二进制，Go+React 内嵌前端，从 sushazhi/trpanel 最新 release 下载）
     log("[5/6] Preparing WebUI (trpanel)...", "yellow")
-    manager_target = os.path.join(BUILD_DIR, "app", "bin", "transmission-manager")
+    manager_target = os.path.join(BUILD_DIR, "app", "bin", "trpanel")
     os.makedirs(os.path.dirname(manager_target), exist_ok=True)
 
-    if args.webui_binary:
+    if args.trpanel_src:
+        # 从本地源码构建（Go 交叉编译 + 可选 pnpm 前端构建）
+        ok, err = build_trpanel_from_src(args.trpanel_src, arch, manager_target, args.skip_frontend)
+        if not ok:
+            log(f"  ERROR: 从本地源码构建 trpanel 失败: {err}", "red")
+            sys.exit(1)
+        log(f"  Built trpanel from source: {args.trpanel_src}", "green")
+    elif args.webui_binary:
         # 直接使用预编译二进制
         if not os.path.isfile(args.webui_binary) or os.path.getsize(args.webui_binary) == 0:
             log(f"  ERROR: 指定二进制不存在或为空: {args.webui_binary}", "red")
@@ -460,8 +434,7 @@ def main():
         shutil.copy2(args.webui_binary, manager_target)
         log(f"  Using provided binary: {args.webui_binary}", "green")
     else:
-        # 从 trpanel 最新 release 下载对应架构二进制（解压后重命名为 transmission-manager，
-        # 保持 cmd/main 的 MANAGER_BIN 路径与环境变量兼容，无需改动启动脚本）
+        # 从 trpanel 最新 release 下载对应架构二进制，解压出的 trpanel 直接以原名落入 app/bin/
         ok, err = download_trpanel(arch, manager_target)
         if not ok:
             log(f"  ERROR: 获取 trpanel 失败: {err}", "red")

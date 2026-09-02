@@ -16,7 +16,7 @@
         "label": "数据保留选项",
         "initValue": "keep",
         "options": [
-          { "label": "保留所有数据（推荐）- 种子、配置、RSS订阅等", "value": "keep" },
+          { "label": "保留所有数据（推荐）- 种子、配置等", "value": "keep" },
           { "label": "删除所有数据 - 从全新状态开始", "value": "delete" }
         ],
         "rules": [

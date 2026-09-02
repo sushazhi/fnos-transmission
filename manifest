@@ -1,5 +1,5 @@
 appname = transmission
-version = 4.1.3.2.32
+version = 4.1.3.2.34
 display_name = Transmission
 desc = <b>轻量级BitTorrent下载工具</b>，支持磁力链接、种子文件、DHT/PEX/LSD P2P网络。<br><br>✨ <b>全新现代 Web 界面</b>：基于 Go + React 重构的管理面板，WebSocket 实时推送、移动端优先、PWA 可安装。<br><br>🔐 <b>免密登录：</b>接入fnOS统一网关，登录系统后即可直接打开，无需设置账号密码。<br><br>🌐 <b>访问方式：</b>通过fnOS统一网关（桌面图标）访问，无需配置端口。<br><br>🔧 <b>端口修改：</b>如需自定义本机内部RPC端口，可在<b>应用设置</b>中修改。<br><br>🐛 <b>问题反馈：</b><a href="https://github.com/sushazhi/fnos-transmission/issues" target="_blank">GitHub Issues</a>
 
@@ -25,4 +25,4 @@ desktop_uidir = ui
 desktop_applaunchname = transmission.Application
 
 # 更新日志
-changelog = 更新日志<br>v4.1.3.2.32:<br>1. 修复升级导致种子丢失的问题<br>2. WebUI 更换为基于 Go+React 的 trpanel 管理面板
+changelog = 更新日志<br>v4.1.3.2.34:<br>1. WebUI 后端二进制统一为 trpanel 命名<br>2. 构建脚本支持从本地 trpanel 源码构建（--trpanel-src）<br><br>v4.1.3.2.33:<br>1. 升级备份改为只保留最新一份（不再按日期归档）<br><br>v4.1.3.2.32:<br>1. 修复升级导致种子丢失的问题<br>2. WebUI 更换为基于 Go+React 的 trpanel 管理面板

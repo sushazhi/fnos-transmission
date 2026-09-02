@@ -42,17 +42,11 @@ if [ -f "${SHARE_DIR}/.backup_info" ]; then
         BACKUP_DIR="$_info_backup"
     fi
 fi
-# 回退：若信息文件缺失、指向的备份不存在或为空，取最新的「非空」时间戳备份目录。
+# 回退：若信息文件缺失、指向的备份不存在或为空，回退到固定名备份目录。
 # 关键：必须跳过空备份，否则恢复后 torrents/resume 仍为空，导致种子丢失。
 if [ ! -d "$BACKUP_DIR" ] || [ -z "$(ls -A "$BACKUP_DIR" 2>/dev/null)" ]; then
-    _latest=""
-    for _cand in $(ls -1d "${SHARE_DIR}"/.data_backup_* 2>/dev/null | sort); do
-        if [ -d "$_cand" ] && [ -n "$(ls -A "$_cand" 2>/dev/null)" ]; then
-            _latest="$_cand"
-        fi
-    done
-    if [ -n "$_latest" ]; then
-        BACKUP_DIR="$_latest"
+    if [ -d "${SHARE_DIR}/.data_backup" ] && [ -n "$(ls -A "${SHARE_DIR}/.data_backup" 2>/dev/null)" ]; then
+        BACKUP_DIR="${SHARE_DIR}/.data_backup"
     fi
 fi
 
@@ -75,8 +69,8 @@ if ! chmod +x "$BIN_DIR/transmission-daemon" 2>/dev/null; then
     error_exit "错误：设置可执行权限失败，升级完成但服务可能无法启动"
 fi
 
-# WebUI 后端（transmission-manager）可执行权限
-chmod +x "$BIN_DIR/transmission-manager" 2>/dev/null || echo "警告：无法设置 transmission-manager 可执行权限"
+# WebUI 后端（trpanel）可执行权限
+chmod +x "$BIN_DIR/trpanel" 2>/dev/null || echo "警告：无法设置 trpanel 可执行权限"
 
 # 设置库文件权限
 if [ -d "$LIB_DIR" ]; then
@@ -221,7 +215,7 @@ if [ $EXIT_CODE -eq 0 ]; then
     echo "Transmission 升级成功完成！"
     echo "=================================="
     echo ""
-    echo "网关模式: /app/transmission -> 127.0.0.1:8080 (transmission-manager)"
+    echo "网关模式: /app/transmission -> 127.0.0.1:8080 (trpanel)"
     exit 0
 else
     echo ""
