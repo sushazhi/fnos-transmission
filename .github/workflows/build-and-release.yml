@@ -5,9 +5,9 @@ name: Build and Release Transmission for fnOS
 # （原 musl-daemon.yml 已合并至此）。
 #
 # 触发：
-#   - push ci/musl-daemon     迭代验证（daemon + fpk 产物 + release 资产刷新）
-#   - push tag v*             应用发版（额外将 fpk 发布到该 tag release）
-#   - workflow_dispatch       手动指定 Transmission 版本重建
+#   - push dev             迭代验证（daemon + fpk 产物 + release 资产刷新）
+#   - push tag v*          应用发版（额外将 fpk 发布到该 tag release）
+#   - workflow_dispatch    手动指定 Transmission 版本重建
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ on:
         required: false
         default: false
   push:
-    branches: [ci/musl-daemon]
+    branches: [dev]
     tags: ['v*']
 
 permissions:
@@ -142,7 +142,7 @@ jobs:
 
           # 迭代分支/手动强制 -> 总是重建刷新资产；否则 release 已有同名资产 -> 下载复用
           REBUILD="false"
-          if [ "${{ github.ref }}" = "refs/heads/ci/musl-daemon" ] || [ "${{ inputs.force_rebuild }}" = "true" ]; then
+          if [ "${{ github.ref }}" = "refs/heads/dev" ] || [ "${{ inputs.force_rebuild }}" = "true" ]; then
             REBUILD="true"
             echo "Force rebuild requested"
           elif ! gh release view "v${TRANSMISSION_VERSION}" --repo "$GITHUB_REPOSITORY" \
