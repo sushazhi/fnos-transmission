@@ -49,7 +49,7 @@ jobs:
             -DENABLE_CLI=OFF -DENABLE_UTILS=OFF -DENABLE_NLS=OFF \
             -DINSTALL_DOC=OFF -DINSTALL_EXAMPLES=OFF \
             -DUSE_SYSTEM_EVENT2=ON -DUSE_SYSTEM_CURL=ON -DUSE_SYSTEM_OPENSSL=ON \
-            -DUSE_SYSTEM_DEFLATE=ON -DUSE_SYSTEM_DHT=OFF -DUSE_SYSTEM_MINIUPNPC=OFF \
+            -DUSE_SYSTEM_DHT=OFF -DUSE_SYSTEM_MINIUPNPC=OFF \
             -DUSE_SYSTEM_NATPMP=OFF -DUSE_SYSTEM_UTP=OFF -DUSE_SYSTEM_B64=OFF -DUSE_SYSTEM_PSL=OFF
           cmake --build build -j "$(nproc)"
           cp build/daemon/transmission-daemon "$OUT/transmission-daemon"
