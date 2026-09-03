@@ -58,7 +58,22 @@ jobs:
           EOF
 
       - name: Build in Alpine (native arch)
-        run: docker run --rm -v "$PWD:/w" -e VERSION alpine:latest sh /w/build.sh
+        run: |
+          set -o pipefail
+          docker run --rm -v "$PWD:/w" -e VERSION alpine:latest sh /w/build.sh 2>&1 | tee build-docker.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Upload build log
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tail -c 80000 build-docker.log > build-log.txt || true
+          for i in 1 2 3; do
+            gh release upload "v${VERSION}" "build-log.txt#musl-build-log-${{ matrix.arch }}" \
+              --clobber --repo "$GITHUB_REPOSITORY" && break
+            echo "retry $i"; sleep 15
+          done
 
       - name: Inspect binary
         run: |
