@@ -119,7 +119,7 @@ GitHub Actions（`.github/workflows/build-and-release.yml`）自动为 **arm64**
 
 | 文件 | 说明 |
 |------|------|
-| `transmission-<版本>-<架构>.fpk` | fnOS 安装包（如 `transmission-4.1.3.2.37-arm64.fpk`） |
+| `transmission-<版本>-<架构>.fpk` | fnOS 安装包（如 `transmission-4.1.3.2-arm64.fpk`） |
 | `.local-build/` | 构建缓存目录（daemon / fnpack，可删除） |
 
 ---
@@ -228,10 +228,8 @@ fnos-transmission/
 
 ## 📝 更新日志
 
-### v4.1.3.2.37
+### v4.1.3.2.2
 - 🔧 transmission-daemon 改为 Alpine musl 全静态编译（static-pie，无 glibc 等动态库依赖），CI 自动双架构编译并复用已发布产物
-
-### v4.1.3.2.3
 - ✨ 管理面板升级为 [trpanel](https://github.com/sushazhi/trpanel)（Go+React 单二进制），构建脚本改为从 trpanel 最新 release 自动下载打包
 
 ### v4.1.3.2.1
