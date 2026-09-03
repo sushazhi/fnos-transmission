@@ -33,10 +33,23 @@ jobs:
           OUT=/w/out
           mkdir -p "$OUT"
           apk add --no-cache build-base cmake ninja pkgconfig linux-headers tar xz gzip curl git file \
-            curl-dev curl-static libevent-dev libevent-static openssl-dev zlib-dev
-          for p in openssl-libs-static zlib-static nghttp2-static brotli-static zstd-static \
-                   libpsl-static libidn2-static libunistring-static pcre2-static c-ares-static; do
-            apk add --no-cache "$p" || echo "::notice::package not available: $p"
+            curl-dev curl-static libevent-dev libevent-static openssl-dev zlib-dev c-ares-dev \
+            openssl-libs-static zlib-static nghttp2-static brotli-static zstd-static \
+            libpsl-static libidn2-static libunistring-static
+          # c-ares 的静态库随 c-ares-dev 提供（Alpine 没有 c-ares-static 包）
+          # 让 pkg-config 始终输出 --static 链接行（含 Libs.private 里的静态依赖）
+          cat > /usr/local/bin/pkgconf-static <<'XEOF'
+          #!/bin/sh
+          exec /usr/bin/pkgconf --static "$@"
+          XEOF
+          chmod +x /usr/local/bin/pkgconf-static
+          export PKG_CONFIG=/usr/local/bin/pkgconf-static
+          # CMake 4.x 上 -DCMAKE_FIND_LIBRARY_SUFFIXES 不可靠（实测仍选中 .so），
+          # 直接把要静态化的系统库 .so 移走，find_library 只能命中 .a
+          mkdir -p /noso
+          for lib in curl event_core event_extra event_openssl event_pthreads event \
+                     ssl crypto z cares nghttp2 idn2 unistring psl brotlidec brotlicommon zstd; do
+            mv /usr/lib/lib${lib}.so* /noso/ 2>/dev/null || true
           done
           cd /tmp
           curl -fsSLo src.tar.xz "https://github.com/transmission/transmission/releases/download/${VERSION}/transmission-${VERSION}.tar.xz"
@@ -45,7 +58,11 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_EXE_LINKER_FLAGS=-static \
-            -DCMAKE_FIND_LIBRARY_SUFFIXES=".a;.so" \
+            -DCMAKE_FIND_LIBRARY_SUFFIXES=.a \
+            -DEVENT2_PREFER_STATIC_LIB=ON \
+            -DCURL_USE_STATIC_LIBS=ON \
+            -DOPENSSL_USE_STATIC_LIBS=ON \
+            -DENABLE_TESTS=OFF \
             -DENABLE_DAEMON=ON -DENABLE_GTK=OFF -DENABLE_QT=OFF -DENABLE_MAC=OFF \
             -DENABLE_CLI=OFF -DENABLE_UTILS=OFF -DENABLE_NLS=OFF \
             -DINSTALL_DOC=OFF -DINSTALL_EXAMPLES=OFF \
