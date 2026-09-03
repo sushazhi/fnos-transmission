@@ -150,6 +150,15 @@ def get_daemon_candidates(target_version, arch):
     ]
 
 
+def is_elf(path):
+    """校验 ELF 魔数（\\x7fELF），防止代理返回的错误页/残缺文件被当成有效 daemon。"""
+    try:
+        with open(path, "rb") as f:
+            return f.read(4) == b"\x7fELF"
+    except OSError:
+        return False
+
+
 def download_trpanel(arch, out_path):
     """从 sushazhi/trpanel 最新 release 下载对应架构的 tar.gz 并解压出 trpanel 二进制。
 
@@ -373,20 +382,27 @@ def main():
     daemon_done = False
     for name in get_daemon_candidates(target_version, arch):
         cache = os.path.join(BUILD_DIR, name)
-        if os.path.exists(cache) and os.path.getsize(cache) > 0:
+        if os.path.exists(cache) and os.path.getsize(cache) > 0 and is_elf(cache):
             shutil.copy2(cache, daemon_target)
             log(f"  Using cached binary: {name}", "green")
             daemon_done = True
             break
+        if os.path.exists(cache):
+            os.remove(cache)
         url = f"{GITHUB_RELEASES_URL}/v{target_version}/{name}"
         log(f"  Trying {name}...", "gray")
         if download_proxy(url, cache, name):
-            shutil.copy2(cache, daemon_target)
-            daemon_done = True
-            break
+            if is_elf(cache):
+                shutil.copy2(cache, daemon_target)
+                daemon_done = True
+                break
+            os.remove(cache)
+            log(f"  Not a valid ELF binary: {name}", "red")
     if not daemon_done:
         log(f"  ERROR: Failed to download transmission-daemon for {arch} (release v{target_version})", "red")
         sys.exit(1)
+    if os.name != "nt":
+        os.chmod(daemon_target, 0o755)
 
     # [4/5] WebUI（trpanel 单二进制，Go+React 内嵌前端；默认本地源码构建，回退 release 下载）
     log("[4/5] Preparing WebUI (trpanel)...", "yellow")
