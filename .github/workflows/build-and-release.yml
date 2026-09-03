@@ -149,19 +149,19 @@ jobs:
           fi
 
           if [ "${REBUILD}" = "true" ]; then
+            # 强制重建（force_rebuild / 资产缺失）：直接用本地编译产物，勿被 release 旧资产覆盖
             build_daemon
-          fi
-
-          # 复用路径：下载并校验，失败则回退重建
-          if ! curl -fsSL --retry 3 -o out/transmission-daemon "${BASE}/${ASSET}"; then
-            echo "Download failed, falling back to build"
-            rm -f out/transmission-daemon
-            build_daemon
-          fi
-          if ! file out/transmission-daemon | grep -q "static-pie"; then
-            echo "Unexpected binary type, falling back to build"
-            rm -f out/transmission-daemon
-            build_daemon
+          else
+            # 复用路径：下载并校验，失败则回退重建
+            if ! curl -fsSL --retry 3 -o out/transmission-daemon "${BASE}/${ASSET}"; then
+              echo "Download failed, falling back to build"
+              rm -f out/transmission-daemon
+              build_daemon
+            elif ! file out/transmission-daemon | grep -q "static-pie"; then
+              echo "Unexpected binary type, falling back to build"
+              rm -f out/transmission-daemon
+              build_daemon
+            fi
           fi
           echo "Daemon ready: $(stat -c %s out/transmission-daemon) bytes"
 
@@ -176,8 +176,7 @@ jobs:
 
       - name: Prepare app structure
         run: |
-          # 与 build.py [2/6] 对应：复制项目文件到构建根目录
-          # 注意：app/ui/config 与 app/ui/images 已在仓库中，无需复制
+          # 对应 build.py：复制项目文件到构建根目录；app/ui/config 与 app/ui/images 已在仓库中，无需复制
           mkdir -p app/bin
           cp -r cmd config wizard . 2>/dev/null || true
           cp manifest ICON.PNG ICON_256.PNG . 2>/dev/null || true
