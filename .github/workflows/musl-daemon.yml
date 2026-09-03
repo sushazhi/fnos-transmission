@@ -32,10 +32,10 @@ jobs:
           set -eux
           OUT=/w/out
           mkdir -p "$OUT"
-          apk add --no-cache build-base cmake ninja pkgconfig linux-headers tar xz gzip curl git file
-          for p in rust cargo curl-static libevent-static openssl-libs-static zlib-static \
-                   nghttp2-static brotli-static zstd-static libpsl-static libidn2-static \
-                   libunistring-static pcre2-static c-ares-static; do
+          apk add --no-cache build-base cmake ninja pkgconfig linux-headers tar xz gzip curl git file \
+            curl-dev curl-static libevent-dev libevent-static openssl-dev zlib-dev
+          for p in openssl-libs-static zlib-static nghttp2-static brotli-static zstd-static \
+                   libpsl-static libidn2-static libunistring-static pcre2-static c-ares-static; do
             apk add --no-cache "$p" || echo "::notice::package not available: $p"
           done
           cd /tmp
@@ -45,6 +45,7 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_EXE_LINKER_FLAGS=-static \
+            -DCMAKE_FIND_LIBRARY_SUFFIXES=".a;.so" \
             -DENABLE_DAEMON=ON -DENABLE_GTK=OFF -DENABLE_QT=OFF -DENABLE_MAC=OFF \
             -DENABLE_CLI=OFF -DENABLE_UTILS=OFF -DENABLE_NLS=OFF \
             -DINSTALL_DOC=OFF -DINSTALL_EXAMPLES=OFF \
