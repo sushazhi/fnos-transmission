@@ -13,7 +13,6 @@ error_exit() {
     exit $exit_code
 }
 BIN_DIR="${TRIM_APPDEST}/bin"
-LIB_DIR="${TRIM_APPDEST}/lib"
 DATA_DIR="${TRIM_PKGVAR}"
 CONFIG_DIR="${DATA_DIR}/settings.json"
 CONFIG_FILE="${CONFIG_DIR}"
@@ -72,18 +71,11 @@ fi
 # WebUI 后端（trpanel）可执行权限
 chmod +x "$BIN_DIR/trpanel" 2>/dev/null || echo "警告：无法设置 trpanel 可执行权限"
 
-# 设置库文件权限
-if [ -d "$LIB_DIR" ]; then
-    chmod 755 "$LIB_DIR" 2>/dev/null || true
-    chmod 755 "$LIB_DIR"/*.so* 2>/dev/null || true
-fi
-
 # 验证二进制文件
 echo "[2/3] 验证新安装..."
 if [ -x "$BIN_DIR/transmission-daemon" ]; then
     echo "找到 transmission-daemon 并可执行"
-    # 需要设置 LD_LIBRARY_PATH 否则找不到 libminiupnpc.so.17
-    VERSION=$(LD_LIBRARY_PATH="${LIB_DIR}" "$BIN_DIR/transmission-daemon" --version 2>&1 | head -1)
+    VERSION=$("$BIN_DIR/transmission-daemon" --version 2>&1 | head -1)
     echo "版本: $VERSION"
 else
     error_exit "错误：transmission-daemon 未找到或不可执行"

@@ -42,8 +42,8 @@
 | 组件 | 要求 |
 |------|------|
 | Python | 3.8+（Windows / Linux / macOS 通用） |
-| transmission-daemon | 构建时自动从 [GitHub Releases](https://github.com/sushazhi/fnos-transmission/releases) 获取对应架构的编译产物 |
-| trpanel | 构建时自动从 [trpanel Releases](https://github.com/sushazhi/trpanel/releases) 获取对应架构的 WebUI 管理面板（Go+React 单二进制） |
+| transmission-daemon | musl 全静态编译产物（无需动态库），构建时自动从 [GitHub Releases](https://github.com/sushazhi/fnos-transmission/releases) 获取 `transmission-daemon-musl-<版本>-<架构>` |
+| trpanel | 默认从本地 `../trpanel` 源码构建（需 Go + pnpm 11+）；源码不存在时回退为从 [trpanel Releases](https://github.com/sushazhi/trpanel/releases) 下载对应架构的 WebUI 管理面板（Go+React 单二进制） |
 
 ### 一键构建
 
@@ -63,13 +63,19 @@ python build.py --arch amd64
 # 指定 transmission-daemon 版本
 python build.py --transmission-version 4.1.3
 
-# 从本地 trpanel 源码目录构建 WebUI（需 Go + pnpm 11+）
+# 默认从本地 ../trpanel 源码构建 WebUI（检测到源码目录即生效，需 Go + pnpm 11+）
+python build.py
+
+# 指定其他 trpanel 源码目录
 python build.py --trpanel-src ../trpanel
 
-# 从本地源码构建，但跳过前端 pnpm 构建（复用 frontend/dist 已有产物）
-python build.py --trpanel-src ../trpanel --skip-frontend
+# 本地源码构建，但跳过前端 pnpm 构建（复用 frontend/dist 已有产物）
+python build.py --skip-frontend
 
-# 直接使用预编译的 trpanel 二进制（跳过 trpanel 下载）
+# 强制从 trpanel 最新 release 下载 WebUI（跳过本地源码）
+python build.py --trpanel-release
+
+# 直接使用预编译的 trpanel 二进制
 python build.py --webui-binary ./trpanel-linux-arm64
 
 # 列出可用的 transmission 版本
@@ -83,25 +89,29 @@ python build.py --list-versions
 | `--app-version, -v` | 应用版本号（覆盖 manifest） | 读取 manifest |
 | `--transmission-version, -t` | 指定 transmission-daemon 版本 | 应用版本前 3 段 |
 | `--arch, -a` | 目标架构 `arm64` / `amd64` | `arm64` |
-| `--trpanel-src` | 从本地 trpanel 源码目录构建 WebUI（需 Go + pnpm 11+），优先级最高 | — |
-| `--skip-frontend` | 配合 `--trpanel-src`：跳过前端 pnpm 构建，复用已有 `frontend/dist` 或 `backend/web/dist` | — |
+| `--trpanel-src` | 指定本地 trpanel 源码目录构建 WebUI（需 Go + pnpm 11+），优先级最高 | 自动检测 `../trpanel` |
+| `--skip-frontend` | 配合本地源码构建：跳过前端 pnpm 构建，复用已有 `frontend/dist` 或 `backend/web/dist` | — |
 | `--webui-binary` | 直接使用指定路径的 linux `trpanel` 二进制，跳过 trpanel 下载 | — |
+| `--trpanel-release` | 强制从 trpanel 最新 release 下载 WebUI，跳过本地源码检测 | — |
 | `--list-versions` | 列出可用的 transmission 版本 | — |
 
 **构建特性**：
 - **跨平台**：一份脚本在 Windows / Linux / macOS 通用，自动检测平台并选择对应的官方 `fnpack` 构建工具
-- **WebUI 内嵌**：三种来源，按优先级 `--trpanel-src` > `--webui-binary` > release 下载
-  - **release 下载**（默认）：从 [trpanel](https://github.com/sushazhi/trpanel) 最新 release 下载对应架构的 `trpanel` 单二进制（Go + React 内嵌前端），以原名放入 `app/bin/`，无需本地 Go/Node 工具链
-  - **本地源码构建**（`--trpanel-src <dir>`）：在源码目录内执行 `pnpm install --frozen-lockfile` → `pnpm build` → 产物复制到 `backend/web/dist`，再 `CGO_ENABLED=0 GOOS=linux GOARCH=<arch> go build -trimpath ./cmd/server` 交叉编译，与 trpanel 官方 Dockerfile 流程一致；需 Go 与 pnpm 11+
+- **WebUI 内嵌**：多种来源，按优先级 `--trpanel-src` > `--webui-binary` > 本地 `../trpanel` 自动检测 > release 下载
+  - **本地源码构建**（默认，检测到 `../trpanel`）：在源码目录内执行 `pnpm install --frozen-lockfile` → `pnpm build` → 产物复制到 `backend/web/dist`，再 `CGO_ENABLED=0 GOOS=linux GOARCH=<arch> go build -trimpath ./cmd/server` 交叉编译，与 trpanel 官方 Dockerfile 流程一致；需 Go 与 pnpm 11+
+  - **release 下载**（无本地源码时回退，或 `--trpanel-release` 强制）：从 [trpanel](https://github.com/sushazhi/trpanel) 最新 release 下载对应架构的 `trpanel` 单二进制（Go + React 内嵌前端），以原名放入 `app/bin/`，无需本地 Go/Node 工具链
   - **预编译二进制**（`--webui-binary <file>`）：直接指定已编译好的 linux `trpanel`
-- 自动从 GitHub Releases 获取 `transmission-daemon` 与 `libminiupnpc.so.17`（含架构后缀 / 版本后缀 / 裸文件名多级回退）
+- **daemon 下载**：自动从 GitHub Releases 获取 musl 静态 `transmission-daemon`（候选资产 `transmission-daemon-musl-<版本>-<架构>` → `transmission-daemon-musl-<架构>` 多级回退），产物缓存在 `.local-build/` 供重复构建复用
 - 构建产物输出到项目根目录：`transmission-<版本>-<架构>.fpk`
 
 ### CI 构建
 
-GitHub Actions 会自动为 **arm64** 和 **amd64** 两种架构构建，产物发布在：
-- [Releases](https://github.com/sushazhi/fnos-transmission/releases)
-- CI 运行页面下载 artifacts
+GitHub Actions（`.github/workflows/build-and-release.yml`）自动为 **arm64** / **amd64** 双架构构建并发布：
+
+- **musl 静态编译** transmission-daemon（Alpine 容器内全静态编译），产物上传至 `v<版本>` release；同名资产已存在时直接复用，手动触发时可勾选 `force_rebuild` 强制重编
+- **fpk 打包**：下载 trpanel 最新 release → 组装应用结构 → `fnpack` 打包 → 上传 artifacts；打 `v*` tag 时自动发布 release（含 fpk）
+- 触发方式：推送 `v*` tag、手动触发（workflow_dispatch）
+- 产物位置：[Releases](https://github.com/sushazhi/fnos-transmission/releases)、CI 运行页面 artifacts
 
 ---
 
@@ -109,9 +119,8 @@ GitHub Actions 会自动为 **arm64** 和 **amd64** 两种架构构建，产物�
 
 | 文件 | 说明 |
 |------|------|
-| `transmission-4.1.3.2-arm64.fpk` | fnOS 安装包（ARM64） |
-| `transmission-4.1.3.2-amd64.fpk` | fnOS 安装包（amd64） |
-| `.local-build/` | 构建缓存目录（可删除） |
+| `transmission-<版本>-<架构>.fpk` | fnOS 安装包（如 `transmission-4.1.3.2.37-arm64.fpk`） |
+| `.local-build/` | 构建缓存目录（daemon / fnpack，可删除） |
 
 ---
 
@@ -151,10 +160,8 @@ GitHub Actions 会自动为 **arm64** 和 **amd64** 两种架构构建，产物�
 fnos-transmission/
 ├── app/                    # fnOS应用资源
 │   ├── bin/                # 构建产生的可执行文件
-│   │   ├── transmission-daemon  # Transmission守护进程
+│   │   ├── transmission-daemon  # Transmission守护进程（musl 全静态编译，无动态库依赖）
 │   │   └── trpanel # WebUI 后端（trpanel，Go+React 单二进制，内嵌前端，直连 fnOS 统一网关）
-│   ├── lib/                # 构建产生的库文件
-│   │   └── libminiupnpc.so.*    # UPnP功能库文件
 │   └── ui/                  # 桌面图标与应用入口配置（前端已内嵌于 trpanel）
 │       ├── config          # 桌面应用配置
 │       └── images/         # 应用图标
@@ -220,6 +227,9 @@ fnos-transmission/
 ---
 
 ## 📝 更新日志
+
+### v4.1.3.2.37
+- 🔧 transmission-daemon 改为 Alpine musl 全静态编译（static-pie，无 glibc 等动态库依赖），CI 自动双架构编译并复用已发布产物
 
 ### v4.1.3.2.3
 - ✨ 管理面板升级为 [trpanel](https://github.com/sushazhi/trpanel)（Go+React 单二进制），构建脚本改为从 trpanel 最新 release 自动下载打包

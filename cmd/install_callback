@@ -3,7 +3,6 @@
 
 APP_NAME="transmission-daemon"
 BIN_DIR="${TRIM_APPDEST}/bin"
-LIB_DIR="${TRIM_APPDEST}/lib"
 DATA_DIR="${TRIM_PKGVAR}"
 CONFIG_DIR="${DATA_DIR}/settings.json"
 
@@ -17,12 +16,6 @@ fi
 
 # WebUI 后端（trpanel）可执行权限
 chmod +x "$BIN_DIR/trpanel" 2>/dev/null || echo "警告：无法设置 trpanel 可执行权限"
-
-# 设置库文件权限（755 对.so库是推荐的，包含执行权限）
-if [ -d "$LIB_DIR" ]; then
-    chmod 755 "$LIB_DIR" 2>/dev/null || true
-    chmod 755 "$LIB_DIR"/*.so* 2>/dev/null || true
-fi
 
 # 获取用户配置（从向导或环境变量）
 # 重装/升级时留空用户名和密码将保留已有配置

@@ -11,8 +11,9 @@ build.py - Transmission for fnOS 统一打包脚本（跨平台，替代 build.p
 特性:
     - 自动检测操作系统 (Windows/Linux)，选择对应的 fnpack 构建工具
     - 参数与 build.ps1 兼容
-    - WebUI (trpanel) 默认从 sushazhi/trpanel 最新 release 下载，无需本地 Go/Node 工具链
-    - 也可用 --trpanel-src 从本地源码构建（需 Go + pnpm 11+），或 --webui-binary 指定预编译二进制
+    - WebUI (trpanel) 默认从本地 ../trpanel 源码构建（需 Go + pnpm 11+）；无源码时回退为
+      从 sushazhi/trpanel 最新 release 下载；--trpanel-release 可强制走 release 下载
+    - 也可用 --trpanel-src 指定其他源码目录，或 --webui-binary 指定预编译二进制
 """
 import argparse
 import json
@@ -142,18 +143,10 @@ def copy_tree(src, dst):
 
 
 def get_daemon_candidates(target_version, arch):
+    # musl 静态产物为当前唯一 CI 规范（新命名带版本号，早期 release 无版本号）
     return [
-        f"transmission-daemon-{target_version}-{arch}",
-        f"transmission-daemon-{target_version}",
-        "transmission-daemon",
-    ]
-
-
-def get_lib_candidates(target_version, arch):
-    return [
-        f"libminiupnpc.so.17-{target_version}-{arch}",
-        f"libminiupnpc.so.17-{target_version}",
-        "libminiupnpc.so.17",
+        f"transmission-daemon-musl-{target_version}-{arch}",
+        f"transmission-daemon-musl-{arch}",
     ]
 
 
@@ -309,8 +302,9 @@ def main():
     parser.add_argument("--transmission-version", "-t", default="", help="指定 transmission-daemon 版本")
     parser.add_argument("--arch", "-a", default="arm64", choices=["arm64", "amd64"], help="目标架构")
     parser.add_argument("--trpanel-src", default="", help="从本地 trpanel 源码目录构建 WebUI（需 Go + pnpm 11+），优先级高于 --webui-binary 与 release 下载")
-    parser.add_argument("--skip-frontend", action="store_true", help="配合 --trpanel-src：跳过前端 pnpm 构建，复用已有 frontend/dist 或 backend/web/dist")
+    parser.add_argument("--skip-frontend", action="store_true", help="配合本地源码构建：跳过前端 pnpm 构建，复用已有 frontend/dist 或 backend/web/dist")
     parser.add_argument("--webui-binary", default="", help="直接使用指定路径的 linux trpanel 二进制，跳过 trpanel 下载")
+    parser.add_argument("--trpanel-release", action="store_true", help="跳过本地源码检测，强制从 trpanel 最新 release 下载 WebUI")
     parser.add_argument("--list-versions", action="store_true", help="列出可用的 transmission 版本")
     args = parser.parse_args()
 
@@ -352,16 +346,16 @@ def main():
     log("========================================", "cyan")
     log("", "cyan")
 
-    # [1/6] 构建目录
-    log("[1/6] Setting up build directory...", "yellow")
+    # [1/5] 构建目录
+    log("[1/5] Setting up build directory...", "yellow")
     # 清空旧 app 目录，避免切换 ui/web -> ui 后残留旧 ui/web 子目录
     shutil.rmtree(os.path.join(BUILD_DIR, "app"), ignore_errors=True)
-    for d in ["app/bin", "app/lib", "app/ui", "cmd", "config", "wizard"]:
+    for d in ["app/bin", "app/ui", "cmd", "config", "wizard"]:
         os.makedirs(os.path.join(BUILD_DIR, d), exist_ok=True)
     log("  Build directory ready", "green")
 
-    # [2/6] 复制项目文件
-    log("[2/6] Copying project files...", "yellow")
+    # [2/5] 复制项目文件
+    log("[2/5] Copying project files...", "yellow")
     for sub in ["cmd", "config", "wizard"]:
         src = os.path.join(PROJECT_DIR, sub)
         if os.path.isdir(src):
@@ -373,8 +367,8 @@ def main():
             shutil.copy2(p, BUILD_DIR)
     log("  Project files copied", "green")
 
-    # [3/6] transmission-daemon
-    log("[3/6] Preparing transmission-daemon...", "yellow")
+    # [3/5] transmission-daemon
+    log("[3/5] Preparing transmission-daemon...", "yellow")
     daemon_target = os.path.join(BUILD_DIR, "app", "bin", "transmission-daemon")
     daemon_done = False
     for name in get_daemon_candidates(target_version, arch):
@@ -394,38 +388,26 @@ def main():
         log(f"  ERROR: Failed to download transmission-daemon for {arch} (release v{target_version})", "red")
         sys.exit(1)
 
-    # [4/6] libminiupnpc
-    log("[4/6] Preparing libminiupnpc...", "yellow")
-    lib_target = os.path.join(BUILD_DIR, "app", "lib", "libminiupnpc.so.17")
-    lib_done = False
-    for name in get_lib_candidates(target_version, arch):
-        cache = os.path.join(BUILD_DIR, name)
-        if os.path.exists(cache) and os.path.getsize(cache) > 0:
-            shutil.copy2(cache, lib_target)
-            log(f"  Using cached: {name}", "green")
-            lib_done = True
-            break
-        url = f"{GITHUB_RELEASES_URL}/v{target_version}/{name}"
-        log(f"  Trying {name}...", "gray")
-        if download_proxy(url, cache, name):
-            shutil.copy2(cache, lib_target)
-            lib_done = True
-            break
-    if not lib_done:
-        log(f"  Warning: libminiupnpc.so.17 not available for {arch} in release v{target_version}", "yellow")
-
-    # [5/6] WebUI（trpanel 单二进制，Go+React 内嵌前端，从 sushazhi/trpanel 最新 release 下载）
-    log("[5/6] Preparing WebUI (trpanel)...", "yellow")
+    # [4/5] WebUI（trpanel 单二进制，Go+React 内嵌前端；默认本地源码构建，回退 release 下载）
+    log("[4/5] Preparing WebUI (trpanel)...", "yellow")
     manager_target = os.path.join(BUILD_DIR, "app", "bin", "trpanel")
     os.makedirs(os.path.dirname(manager_target), exist_ok=True)
 
-    if args.trpanel_src:
+    # WebUI 来源优先级：--trpanel-src > --webui-binary > 本地 ../trpanel 自动检测 > release 下载
+    src_dir = args.trpanel_src
+    if not src_dir and not args.webui_binary and not args.trpanel_release:
+        auto_src = os.path.join(os.path.dirname(PROJECT_DIR), "trpanel")
+        if os.path.isfile(os.path.join(auto_src, "backend", "cmd", "server", "main.go")):
+            src_dir = auto_src
+            log(f"  Detected local trpanel source: {auto_src}（--trpanel-release 可改用 release 下载）", "gray")
+
+    if src_dir:
         # 从本地源码构建（Go 交叉编译 + 可选 pnpm 前端构建）
-        ok, err = build_trpanel_from_src(args.trpanel_src, arch, manager_target, args.skip_frontend)
+        ok, err = build_trpanel_from_src(src_dir, arch, manager_target, args.skip_frontend)
         if not ok:
             log(f"  ERROR: 从本地源码构建 trpanel 失败: {err}", "red")
             sys.exit(1)
-        log(f"  Built trpanel from source: {args.trpanel_src}", "green")
+        log(f"  Built trpanel from source: {src_dir}", "green")
     elif args.webui_binary:
         # 直接使用预编译二进制
         if not os.path.isfile(args.webui_binary) or os.path.getsize(args.webui_binary) == 0:
@@ -450,8 +432,8 @@ def main():
             copy_tree(p, os.path.join(ui_target, sub))
     log("  WebUI ready", "green")
 
-    # [6/6] 构建 fpk
-    log("[6/6] Building package...", "yellow")
+    # [5/5] 构建 fpk
+    log("[5/5] Building package...", "yellow")
     fnpack_url = get_fnpack_url()
     fnpack_name = fnpack_url.rsplit("/", 1)[-1]
     fnpack_path = os.path.join(BUILD_DIR, fnpack_name)

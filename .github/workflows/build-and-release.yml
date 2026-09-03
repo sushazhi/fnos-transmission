@@ -1,37 +1,46 @@
 name: Build and Release Transmission for fnOS
 
+# 单一发布 workflow：Alpine musl 全静态编译 transmission-daemon（arm64/amd64），
+# 打包 trpanel WebUI 与 fnpack 产出 fpk，daemon/日志回传 release v${TRANSMISSION_VERSION}
+# （原 musl-daemon.yml 已合并至此）。
+#
+# 触发：
+#   - push ci/musl-daemon     迭代验证（daemon + fpk 产物 + release 资产刷新）
+#   - push tag v*             应用发版（额外将 fpk 发布到该 tag release）
+#   - workflow_dispatch       手动指定 Transmission 版本重建
+
 on:
-  push:
-    tags: [ 'v*' ]
-  pull_request:
-    branches: [ main, develop, test ]
   workflow_dispatch:
     inputs:
       transmission_version:
-        description: 'Transmission version (e.g., 4.1.3)'
+        description: 'Transmission 上游 tag（不带 v）；留空则取 manifest 版本前 3 段'
         required: false
         default: ''
-      arch:
-        description: 'Target architecture (arm64 / amd64 / both)'
+      force_rebuild:
+        description: '强制全量编译 daemon 并刷新 release 资产（否则 release 已有同版本资产时直接复用）'
+        type: boolean
         required: false
-        default: 'both'
+        default: false
+  push:
+    branches: [ci/musl-daemon]
+    tags: ['v*']
 
 permissions:
   contents: write
 
 jobs:
   build:
-    name: Build Transmission - ${{ matrix.arch }}
+    name: Build - ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: arm64
-            runner: ubuntu-22.04-arm
+            runner: ubuntu-24.04-arm
           - arch: amd64
-            runner: ubuntu-22.04
+            runner: ubuntu-24.04
 
     steps:
       - name: Checkout repository
@@ -41,8 +50,14 @@ jobs:
         id: version
         run: |
           APP_VERSION=$(grep "^version = " manifest | cut -d' ' -f3)
-          # Extract transmission version (first 3 parts), e.g., 4.1.3.2.32 -> 4.1.3
-          TRANSMISSION_VERSION=$(echo "$APP_VERSION" | cut -d'.' -f1-3)
+          MANIFEST_TR=$(echo "$APP_VERSION" | cut -d'.' -f1-3)
+          # Transmission 版本：workflow_dispatch 显式指定优先，否则取 manifest 前 3 段（4.1.3.2.32 -> 4.1.3）
+          DISPATCH_TR="${{ inputs.transmission_version }}"
+          if [ -n "${DISPATCH_TR}" ]; then
+            TRANSMISSION_VERSION="${DISPATCH_TR}"
+          else
+            TRANSMISSION_VERSION="${MANIFEST_TR}"
+          fi
           # Check if version is 3-part (e.g., 4.1.3) for release
           VERSION_PARTS=$(echo "$APP_VERSION" | tr '.' '\n' | wc -l)
           if [ "$VERSION_PARTS" -eq 3 ]; then
@@ -50,56 +65,129 @@ jobs:
           else
             IS_RELEASE_VERSION="false"
           fi
-          echo "APP_VERSION=${APP_VERSION}" >> $GITHUB_OUTPUT
           echo "APP_VERSION=${APP_VERSION}" >> $GITHUB_ENV
-          echo "TRANSMISSION_VERSION=${TRANSMISSION_VERSION}" >> $GITHUB_OUTPUT
           echo "TRANSMISSION_VERSION=${TRANSMISSION_VERSION}" >> $GITHUB_ENV
-          echo "IS_RELEASE_VERSION=${IS_RELEASE_VERSION}" >> $GITHUB_OUTPUT
           echo "IS_RELEASE_VERSION=${IS_RELEASE_VERSION}" >> $GITHUB_ENV
-          echo "Read version from manifest: ${APP_VERSION}"
-          echo "Transmission version: ${TRANSMISSION_VERSION}"
-          echo "Is release version (3-part): ${IS_RELEASE_VERSION}"
+          echo "Read APP_VERSION=${APP_VERSION}, TRANSMISSION_VERSION=${TRANSMISSION_VERSION}"
+
+      - name: Write musl static build script
+        run: |
+          cat > build.sh <<'EOF'
+          #!/bin/sh
+          set -eux
+          OUT=/w/out
+          mkdir -p "$OUT"
+          apk add --no-cache build-base cmake ninja pkgconfig linux-headers tar xz gzip curl git file \
+            curl-dev curl-static libevent-dev libevent-static openssl-dev zlib-dev c-ares-dev \
+            openssl-libs-static zlib-static nghttp2-static brotli-static zstd-static \
+            libpsl-static libidn2-static libunistring-static
+          # c-ares 的静态库随 c-ares-dev 提供（Alpine 没有 c-ares-static 包）
+          # 让 pkg-config 始终输出 --static 链接行（含 Libs.private 里的静态依赖）
+          cat > /usr/local/bin/pkgconf-static <<'XEOF'
+          #!/bin/sh
+          exec /usr/bin/pkgconf --static "$@"
+          XEOF
+          chmod +x /usr/local/bin/pkgconf-static
+          export PKG_CONFIG=/usr/local/bin/pkgconf-static
+          cd /tmp
+          curl -fsSLo src.tar.xz "https://github.com/transmission/transmission/releases/download/${VERSION}/transmission-${VERSION}.tar.xz"
+          tar xf src.tar.xz
+          cd "transmission-${VERSION}"
+          # 下载/解包完成后才隐藏动态库 dev 链接 libX.so（find_library 命中的名字），
+          # 此时容器内 curl/git 等工具已不再需要；cmake 4.x 上 -DCMAKE_FIND_LIBRARY_SUFFIXES
+          # 不可靠（实测仍选中 .so），移走后 find_library 只能命中 /usr/lib/libX.a
+          mkdir -p /noso
+          for lib in curl event_core event_extra event_openssl event_pthreads event \
+                     ssl crypto z cares nghttp2 idn2 unistring psl brotlidec brotlicommon zstd; do
+            mv /usr/lib/lib${lib}.so /noso/ 2>/dev/null || true
+          done
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_EXE_LINKER_FLAGS=-static \
+            -DCMAKE_FIND_LIBRARY_SUFFIXES=.a \
+            -DEVENT2_PREFER_STATIC_LIB=ON \
+            -DCURL_USE_STATIC_LIBS=ON \
+            -DOPENSSL_USE_STATIC_LIBS=ON \
+            -DENABLE_TESTS=OFF \
+            -DENABLE_DAEMON=ON -DENABLE_GTK=OFF -DENABLE_QT=OFF -DENABLE_MAC=OFF \
+            -DENABLE_CLI=OFF -DENABLE_UTILS=OFF -DENABLE_NLS=OFF \
+            -DINSTALL_DOC=OFF -DINSTALL_EXAMPLES=OFF \
+            -DUSE_SYSTEM_EVENT2=ON -DUSE_SYSTEM_CURL=ON -DUSE_SYSTEM_OPENSSL=ON \
+            -DUSE_SYSTEM_DHT=OFF -DUSE_SYSTEM_MINIUPNPC=OFF \
+            -DUSE_SYSTEM_NATPMP=OFF -DUSE_SYSTEM_UTP=OFF -DUSE_SYSTEM_B64=OFF -DUSE_SYSTEM_PSL=OFF
+          cmake --build build -j "$(nproc)"
+          cp build/daemon/transmission-daemon "$OUT/transmission-daemon"
+          # out/ 由容器内 root 创建，放开权限让宿主 runner 能写（sha256.txt/mv 重命名）
+          chmod -R a+rwX "$OUT"
+          strip "$OUT/transmission-daemon"
+          file "$OUT/transmission-daemon" || true
+          ldd "$OUT/transmission-daemon" 2>&1 || true
+          EOF
+
+      - name: Prepare daemon binary (reuse or build)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ARCH="${{ matrix.arch }}"
+          BASE="https://github.com/sushazhi/fnos-transmission/releases/download/v${TRANSMISSION_VERSION}"
+          ASSET="transmission-daemon-musl-${TRANSMISSION_VERSION}-${ARCH}"
+          mkdir -p out
+
+          build_daemon() {
+            echo "Building musl static daemon (Alpine)..."
+            set -o pipefail
+            docker run --rm -v "$PWD:/w" -e VERSION="$TRANSMISSION_VERSION" alpine:latest sh /w/build.sh 2>&1 | tee build-docker.log
+            exit ${PIPESTATUS[0]}
+          }
+
+          # 迭代分支/手动强制 -> 总是重建刷新资产；否则 release 已有同名资产 -> 下载复用
+          REBUILD="false"
+          if [ "${{ github.ref }}" = "refs/heads/ci/musl-daemon" ] || [ "${{ inputs.force_rebuild }}" = "true" ]; then
+            REBUILD="true"
+            echo "Force rebuild requested"
+          elif ! gh release view "v${TRANSMISSION_VERSION}" --repo "$GITHUB_REPOSITORY" \
+              --json assets --jq '.assets[].name' 2>/dev/null | grep -qx "${ASSET}"; then
+            REBUILD="true"
+            echo "Release asset ${ASSET} not found"
+          fi
+
+          if [ "${REBUILD}" = "true" ]; then
+            build_daemon
+          fi
+
+          # 复用路径：下载并校验，失败则回退重建
+          if ! curl -fsSL --retry 3 -o out/transmission-daemon "${BASE}/${ASSET}"; then
+            echo "Download failed, falling back to build"
+            rm -f out/transmission-daemon
+            build_daemon
+          fi
+          if ! file out/transmission-daemon | grep -q "static-pie"; then
+            echo "Unexpected binary type, falling back to build"
+            rm -f out/transmission-daemon
+            build_daemon
+          fi
+          echo "Daemon ready: $(stat -c %s out/transmission-daemon) bytes"
+
+      - name: Inspect binary
+        run: |
+          file out/transmission-daemon
+          ls -la out/
+          sha256sum out/transmission-daemon | tee out/sha256.txt
+
+      - name: Rename per arch
+        run: mv out/transmission-daemon "out/transmission-daemon-musl-${TRANSMISSION_VERSION}-${{ matrix.arch }}"
 
       - name: Prepare app structure
         run: |
           # 与 build.py [2/6] 对应：复制项目文件到构建根目录
           # 注意：app/ui/config 与 app/ui/images 已在仓库中，无需复制
-          mkdir -p app/bin app/lib
+          mkdir -p app/bin
           cp -r cmd config wizard . 2>/dev/null || true
           cp manifest ICON.PNG ICON_256.PNG . 2>/dev/null || true
-          echo "Project files copied"
-
-      - name: Download transmission-daemon and libminiupnpc
-        run: |
-          TRANSMISSION_VERSION="${{ env.TRANSMISSION_VERSION }}"
-          ARCH="${{ matrix.arch }}"
-          BASE="https://github.com/sushazhi/fnos-transmission/releases/download/v${TRANSMISSION_VERSION}"
-
-          # 依次尝试带架构名 -> 不带架构名
-          for name in "transmission-daemon-${TRANSMISSION_VERSION}-${ARCH}" "transmission-daemon-${TRANSMISSION_VERSION}" "transmission-daemon"; do
-            echo "Trying ${name}..."
-            if wget -q "${BASE}/${name}" -O app/bin/transmission-daemon 2>/dev/null && [ -s app/bin/transmission-daemon ]; then
-              echo "Downloaded ${name}"
-              break
-            fi
-          done
-          if [ ! -s app/bin/transmission-daemon ]; then
-            echo "ERROR: Failed to download transmission-daemon for ${ARCH} (release v${TRANSMISSION_VERSION})"
-            exit 1
-          fi
+          # musl 静态 daemon 自包含（miniupnpc 等已内嵌），无需 app/lib
+          cp "out/transmission-daemon-musl-${TRANSMISSION_VERSION}-${{ matrix.arch }}" app/bin/transmission-daemon
           chmod +x app/bin/transmission-daemon
-
-          # libminiupnpc（可选）
-          for name in "libminiupnpc.so.17-${TRANSMISSION_VERSION}-${ARCH}" "libminiupnpc.so.17-${TRANSMISSION_VERSION}" "libminiupnpc.so.17"; do
-            echo "Trying ${name}..."
-            if wget -q "${BASE}/${name}" -O app/lib/libminiupnpc.so.17 2>/dev/null && [ -s app/lib/libminiupnpc.so.17 ]; then
-              echo "Downloaded ${name}"
-              break
-            fi
-          done
-          if [ ! -s app/lib/libminiupnpc.so.17 ]; then
-            echo "WARNING: libminiupnpc.so.17 not available for ${ARCH} in release v${TRANSMISSION_VERSION}"
-          fi
+          echo "Project files copied"
 
       - name: Download trpanel (WebUI manager)
         run: |
@@ -119,31 +207,44 @@ jobs:
           fi
           mkdir -p /tmp/trpanel-extract
           tar -xzf /tmp/trpanel.tar.gz -C /tmp/trpanel-extract
-          # 定位 trpanel 可执行文件并重命名为 transmission-manager
+          # 定位 trpanel 可执行文件并命名为 trpanel（与本地 build.py / cmd 脚本一致）
           TRPANEL_BIN=$(find /tmp/trpanel-extract -type f -name "trpanel" | head -1)
           if [ -z "$TRPANEL_BIN" ] || [ ! -s "$TRPANEL_BIN" ]; then
             echo "ERROR: trpanel binary not found in ${ASSET}"
             exit 1
           fi
-          cp "$TRPANEL_BIN" app/bin/transmission-manager
-          chmod +x app/bin/transmission-manager
-          echo "trpanel v${TAG} extracted to transmission-manager"
+          cp "$TRPANEL_BIN" app/bin/trpanel
+          chmod +x app/bin/trpanel
+          echo "trpanel v${TAG} extracted to trpanel"
 
       - name: Verify binaries
         run: |
           echo "Binary verification:"
           file app/bin/transmission-daemon
-          file app/bin/transmission-manager
+          file app/bin/trpanel
           ls -lh app/bin/
-          ls -la app/lib/ 2>/dev/null || echo "(no libs)"
           if [ ! -s app/bin/transmission-daemon ]; then
             echo "ERROR: transmission-daemon not found"
             exit 1
           fi
-          if [ ! -s app/bin/transmission-manager ]; then
-            echo "ERROR: transmission-manager not found"
+          if [ ! -s app/bin/trpanel ]; then
+            echo "ERROR: trpanel not found"
             exit 1
           fi
+
+      - name: Upload build log
+        if: always() && hashFiles('build-docker.log') != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tail -c 80000 build-docker.log > build-log.txt || true
+          # release 可能尚不存在（如手动指定了新的 Transmission 版本），先幂等创建
+          gh release create "v${TRANSMISSION_VERSION}" --repo "$GITHUB_REPOSITORY" --notes "" 2>/dev/null || true
+          for i in 1 2 3; do
+            gh release upload "v${TRANSMISSION_VERSION}" "build-log.txt#musl-build-log-${{ matrix.arch }}" \
+              --clobber --repo "$GITHUB_REPOSITORY" && break
+            echo "retry $i"; sleep 15
+          done
 
       - name: Download fnpack
         run: |
@@ -169,11 +270,23 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: transmission-${{ matrix.arch }}-fpk
+          name: transmission-${{ matrix.arch }}
           path: |
+            out/
             ${{ env.PACKAGE_NAME }}
             ${{ env.PACKAGE_NAME }}.sha256sum
           retention-days: 30
+
+      - name: Upload daemon to transmission release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for i in 1 2 3; do
+            gh release upload "v${TRANSMISSION_VERSION}" "out/transmission-daemon-musl-${TRANSMISSION_VERSION}-${{ matrix.arch }}" \
+              --clobber --repo "$GITHUB_REPOSITORY" && break
+            echo "retry $i"; sleep 15
+          done
+          gh release view "v${TRANSMISSION_VERSION}" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'
 
       - name: Build summary
         run: |
@@ -186,12 +299,13 @@ jobs:
           **Is Release Version:** ${{ env.IS_RELEASE_VERSION }}
 
           **Components:**
-          - Transmission daemon: ${{ matrix.arch }} binary (from release v${{ env.TRANSMISSION_VERSION }})
+          - Transmission daemon: ${{ matrix.arch }} musl 全静态（Alpine 编译，miniupnpc 内嵌）
           - WebUI: trpanel (Go+React 单二进制) ${{ matrix.arch }}
 
           **Build Artifacts:**
           - Package: \`${PACKAGE_NAME}\`
           - Checksum: \`${PACKAGE_NAME}.sha256sum\`
+          - Daemon: \`out/transmission-daemon-musl-${TRANSMISSION_VERSION}-${{ matrix.arch }}\`
           EOF
 
       - name: Publish Release with Changelog

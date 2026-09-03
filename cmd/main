@@ -3,7 +3,6 @@
 
 APP_NAME="transmission-daemon"
 BIN_DIR="${TRIM_APPDEST}/bin"
-LIB_DIR="${TRIM_APPDEST}/lib"
 DATA_DIR="${TRIM_PKGVAR}"
 CONFIG_DIR="${DATA_DIR}/settings.json"
 PID_FILE="${TRIM_PKGTMP}/${APP_NAME}.pid"
@@ -16,9 +15,6 @@ MANAGER_PID_FILE="${TRIM_PKGTMP}/${APP_NAME}-manager.pid"
 MANAGER_DATA_DIR="${DATA_DIR}/manager"
 GATEWAY_SOCK="${TRIM_APPDEST}/transmission.sock"
 GATEWAY_PREFIX="/app/transmission"
-
-# 设置库路径（WebUI 前端已内嵌于 trpanel，不再覆盖 daemon 的 web 目录）
-export LD_LIBRARY_PATH="${LIB_DIR}:${LD_LIBRARY_PATH}"
 
 # daemon RPC 端口（内部值，不暴露给用户；manager 通过 TR_URL 连接此端口）
 WEBUI_PORT="9090"
@@ -191,6 +187,8 @@ start_manager() {
     TRIM_API_TOKEN="${TRIM_API_TOKEN}" \
     GIN_MODE="release" \
     LOG_LEVEL="warn" \
+    GOGC="50" \
+    GOMEMLIMIT="128MiB" \
     "$MANAGER_BIN" >> "$LOG_FILE" 2>&1 &
     local MPID=$!
     echo $MPID > "$MANAGER_PID_FILE"
