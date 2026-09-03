@@ -72,6 +72,9 @@ jobs:
             -DUSE_SYSTEM_NATPMP=OFF -DUSE_SYSTEM_UTP=OFF -DUSE_SYSTEM_B64=OFF -DUSE_SYSTEM_PSL=OFF
           cmake --build build -j "$(nproc)"
           cp build/daemon/transmission-daemon "$OUT/transmission-daemon"
+          # out/ 由容器内 root 创建，放开权限让宿主 runner 能写（sha256.txt/mv 重命名）
+          chmod -R a+rwX "$OUT"
+          strip "$OUT/transmission-daemon"
           file "$OUT/transmission-daemon" || true
           ldd "$OUT/transmission-daemon" 2>&1 || true
           EOF
