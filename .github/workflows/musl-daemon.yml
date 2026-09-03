@@ -44,18 +44,18 @@ jobs:
           XEOF
           chmod +x /usr/local/bin/pkgconf-static
           export PKG_CONFIG=/usr/local/bin/pkgconf-static
-          # CMake 4.x 上 -DCMAKE_FIND_LIBRARY_SUFFIXES 不可靠（实测仍选中 .so），
-          # 只移走无版本号的 dev 链接 libX.so（find_library 命中的名字），
-          # 保留 libX.so.8 这类版本化真实库，容器内 curl/git 等工具才能继续运行
+          cd /tmp
+          curl -fsSLo src.tar.xz "https://github.com/transmission/transmission/releases/download/${VERSION}/transmission-${VERSION}.tar.xz"
+          tar xf src.tar.xz
+          cd "transmission-${VERSION}"
+          # 下载/解包完成后才隐藏动态库 dev 链接 libX.so（find_library 命中的名字），
+          # 此时容器内 curl/git 等工具已不再需要；cmake 4.x 上 -DCMAKE_FIND_LIBRARY_SUFFIXES
+          # 不可靠（实测仍选中 .so），移走后 find_library 只能命中 /usr/lib/libX.a
           mkdir -p /noso
           for lib in curl event_core event_extra event_openssl event_pthreads event \
                      ssl crypto z cares nghttp2 idn2 unistring psl brotlidec brotlicommon zstd; do
             mv /usr/lib/lib${lib}.so /noso/ 2>/dev/null || true
           done
-          cd /tmp
-          curl -fsSLo src.tar.xz "https://github.com/transmission/transmission/releases/download/${VERSION}/transmission-${VERSION}.tar.xz"
-          tar xf src.tar.xz
-          cd "transmission-${VERSION}"
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_EXE_LINKER_FLAGS=-static \
