@@ -16,6 +16,9 @@ MANAGER_DATA_DIR="${DATA_DIR}/manager"
 GATEWAY_SOCK="${TRIM_APPDEST}/transmission.sock"
 GATEWAY_PREFIX="/app/transmission"
 
+# MCP 专用直连端口（AI 客户端经该端口直连 /mcp，绕过统一网关；0 关闭；可被环境变量覆盖）
+MCP_PORT="${MCP_PORT:-9094}"
+
 # daemon RPC 端口（内部值，不暴露给用户；manager 通过 TR_URL 连接此端口）
 WEBUI_PORT="9090"
 
@@ -175,6 +178,7 @@ start_manager() {
 
     # 通过环境变量注入连接配置（优先级最高，覆盖 .env/.env.local/config.yaml）
     # SERVER_SOCKET：直接监听 fnOS 网关 Unix socket；GATEWAY_PREFIX：网关路径前缀
+    # SERVER_HOST/MCP_PORT：MCP 专用直连 TCP 端口（界面 API 不经 TCP 暴露，仅 /mcp）
     # TM_PLATFORM：显式指定宿主平台为 fnOS，启用文件选择器/打开目录/更新等专属能力
     # TRIM_API_TOKEN：宿主注入的开放 API 令牌（语义路径转换用），仅透传进程环境，不落盘不打日志
     TR_URL="http://127.0.0.1:${WEBUI_PORT}/transmission/rpc" \
@@ -182,6 +186,8 @@ start_manager() {
     TR_PASS="${RPC_PASS}" \
     SERVER_SOCKET="${GATEWAY_SOCK}" \
     GATEWAY_PREFIX="${GATEWAY_PREFIX}" \
+    SERVER_HOST="0.0.0.0" \
+    MCP_PORT="${MCP_PORT}" \
     TM_PLATFORM="fnos" \
     TM_DATA_DIR="${MANAGER_DATA_DIR}" \
     TRIM_API_TOKEN="${TRIM_API_TOKEN}" \

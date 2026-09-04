@@ -228,11 +228,10 @@ fnos-transmission/
 
 ## 📝 更新日志
 
-### v4.1.3.2.2
+### v4.1.3.2.38
+- ✨ 新增 MCP 独立直连端口（默认 9094），AI 客户端可绕过统一网关直连 `/mcp`
 - 🔧 transmission-daemon 改为 Alpine musl 全静态编译（static-pie，无 glibc 等动态库依赖），CI 自动双架构编译并复用已发布产物
 - ✨ 管理面板升级为 [trpanel](https://github.com/sushazhi/trpanel)（Go+React 单二进制），构建脚本改为从 trpanel 最新 release 自动下载打包
-
-### v4.1.3.2.1
 - ✨ 新增打开/选择下载目录（fnOS文件选择器）
 
 ### v4.1.1

@@ -43,7 +43,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Read version from manifest
         id: version
@@ -250,7 +250,7 @@ jobs:
           sha256sum "${PACKAGE_NAME}" > "${PACKAGE_NAME}.sha256sum"
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: transmission-${{ matrix.arch }}
           path: |
