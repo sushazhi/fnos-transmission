@@ -307,7 +307,7 @@ def build_trpanel_from_src(src_dir, arch, out_path, skip_frontend=False):
 
 def main():
     parser = argparse.ArgumentParser(description="Transmission for fnOS 统一打包脚本")
-    parser.add_argument("--app-version", "-v", default="", help="应用版本号（默认读 manifest，覆盖输出文件名）")
+    parser.add_argument("--app-version", "-v", default="", help="应用版本号（默认读 manifest，覆盖输出文件名与包内 manifest 的 version 行）")
     parser.add_argument("--transmission-version", "-t", default="", help="指定 transmission-daemon 版本")
     parser.add_argument("--arch", "-a", default="arm64", choices=["arm64", "amd64"], help="目标架构")
     parser.add_argument("--trpanel-src", default="", help="从本地 trpanel 源码目录构建 WebUI（需 Go + pnpm 11+），优先级高于 --webui-binary 与 release 下载")
@@ -370,6 +370,18 @@ def main():
         if os.path.isdir(src):
             copy_tree(src, os.path.join(BUILD_DIR, sub))
     shutil.copy2(MANIFEST_FILE, BUILD_DIR)
+    if app_version != manifest_version:
+        build_manifest = os.path.join(BUILD_DIR, "manifest")
+        with open(build_manifest, "r", encoding="utf-8", newline="") as f:
+            lines = f.readlines()
+        for i, line in enumerate(lines):
+            if line.split("=", 1)[0].strip() == "version":
+                eol = "\r\n" if line.endswith("\r\n") else ("\n" if line.endswith("\n") else "")
+                lines[i] = f"version = {app_version}{eol}"
+                break
+        with open(build_manifest, "w", encoding="utf-8", newline="") as f:
+            f.writelines(lines)
+        log(f"  Packaged manifest version: {manifest_version} -> {app_version}（仓库 manifest 未改动）", "gray")
     for icon in ["ICON.PNG", "ICON_256.PNG"]:
         p = os.path.join(PROJECT_DIR, icon)
         if os.path.exists(p):
