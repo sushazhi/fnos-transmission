@@ -3,9 +3,9 @@
 [![Transmission Version](https://img.shields.io/badge/Transmission-4.1.3-blue?style=flat-square)](https://github.com/transmission/transmission/releases)
 [![WebUI](https://img.shields.io/badge/WebUI-Go%2BReact-green?style=flat-square)](https://github.com/sushazhi/trpanel)
 [![Platform](https://img.shields.io/badge/Platform-fnOS-green?style=flat-square)](https://www.fnnas.com/)
-[![License](https://img.shields.io/badge/License-GPL--2.0-blue?style=flat-square)](https://www.gnu.org/licenses/gpl-2.0.html)
+[![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 
-> 📌 **注意**：本应用支持 **ARM64 (aarch64)** 和 **amd64 (x86_64)** 架构，系统要求 **fnOS v1.1.3105 及以上**。
+> 📌 **注意**：本应用支持 **ARM64 (aarch64)** 和 **amd64 (x86_64)** 架构，系统要求 **fnOS v1.2.0401 及以上**。
 
 ---
 
@@ -208,7 +208,9 @@ fnos-transmission/
 | 项目 | 版本 | 用途 | 许可证 |
 |------|------|------|--------|
 | [Transmission](https://github.com/transmission/transmission) | 4.1.3 | BitTorrent 客户端核心 | [GPL-2.0](https://www.gnu.org/licenses/gpl-2.0.html) |
-| [trpanel](https://github.com/sushazhi/trpanel) | latest | WebUI 管理面板（Go + React 单二进制，内嵌前端） | 见仓库 |
+| [trpanel](https://github.com/sushazhi/trpanel) | latest | WebUI 管理面板（Go + React 单二进制，内嵌前端） | MIT |
+
+> 📌 **许可证说明**：本应用自身代码（生命周期脚本、构建工具、配置）以 [MIT](LICENSE) 许可证发布；包内聚合分发了 **Transmission（GPL-2.0）** 的 `transmission-daemon` 二进制与 **trpanel（MIT）** 的 WebUI。Transmission 对应源代码与构建脚本的获取方式见 [LICENSE](LICENSE) 中的「Source code offer」。
 
 ---
 

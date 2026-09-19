@@ -43,10 +43,30 @@ the Free Software Foundation; either version 2 of the License, or
 Full license: https://www.gnu.org/licenses/gpl-2.0.html
 ```
 
-#### transmission-web (MIT)
+**Source code offer (GPL-2.0 §3):** This package redistributes the
+`transmission-daemon` binary as an Alpine/musl fully static executable. The
+binary is built from **unmodified** upstream Transmission source of the bundled
+version (the application `version` in `manifest`, its first three parts, e.g.
+`4.1.3.3` -> `4.1.3`). The corresponding source code is the upstream release:
+
+- Source tarball: https://github.com/transmission/transmission/releases/download/4.1.3/transmission-4.1.3.tar.xz
+- Release tag:    https://github.com/transmission/transmission/releases/tag/4.1.3
+
+The build scripts that produce the static binary (Alpine container + CMake
+static link, including the exact `build.sh` invocation) are maintained in this
+repository:
+
+- https://github.com/sushazhi/fnos-transmission/blob/main/.github/workflows/build-and-release.yml
+
+In accordance with GPL-2.0 §3(b), a written offer valid for at least three
+years is hereby made: any third party may request the complete corresponding
+source code by opening an issue at
+https://github.com/sushazhi/fnos-transmission/issues.
+
+#### trpanel (MIT)
 
 ```
-Copyright (c) jianxcao
+Copyright (c) 2026 sushazhi
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
