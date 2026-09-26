@@ -1,7 +1,7 @@
 # Transmission for fnOS 🚀
 
 [![Transmission Version](https://img.shields.io/badge/Transmission-4.1.3-blue?style=flat-square)](https://github.com/transmission/transmission/releases)
-[![WebUI](https://img.shields.io/badge/WebUI-Go%2BReact-green?style=flat-square)](https://github.com/sushazhi/trpanel)
+[![WebUI](https://img.shields.io/badge/WebUI-Go%2BReact-green?style=flat-square)](https://github.com/sushazhi/SeedArk)
 [![Platform](https://img.shields.io/badge/Platform-fnOS-green?style=flat-square)](https://www.fnnas.com/)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 
@@ -43,7 +43,7 @@
 |------|------|
 | Python | 3.8+（Windows / Linux / macOS 通用） |
 | transmission-daemon | musl 全静态编译产物（无需动态库），构建时自动从 [GitHub Releases](https://github.com/sushazhi/fnos-transmission/releases) 获取 `transmission-daemon-musl-<版本>-<架构>` |
-| trpanel | 默认从本地 `../trpanel` 源码构建（需 Go + pnpm 11+）；源码不存在时回退为从 [trpanel Releases](https://github.com/sushazhi/trpanel/releases) 下载对应架构的 WebUI 管理面板（Go+React 单二进制） |
+| SeedArk | 默认从本地 `../SeedArk` 源码构建（需 Go + pnpm 11+）；源码不存在时回退为从 [SeedArk Releases](https://github.com/sushazhi/SeedArk/releases) 下载对应架构的 WebUI 管理面板（Go+React 单二进制，原名 trpanel） |
 
 ### 一键构建
 
@@ -63,20 +63,20 @@ python build.py --arch amd64
 # 指定 transmission-daemon 版本
 python build.py --transmission-version 4.1.3
 
-# 默认从本地 ../trpanel 源码构建 WebUI（检测到源码目录即生效，需 Go + pnpm 11+）
+# 默认从本地 ../SeedArk 源码构建 WebUI（检测到源码目录即生效，需 Go + pnpm 11+）
 python build.py
 
-# 指定其他 trpanel 源码目录
-python build.py --trpanel-src ../trpanel
+# 指定其他 SeedArk 源码目录
+python build.py --seedark-src ../SeedArk
 
 # 本地源码构建，但跳过前端 pnpm 构建（复用 frontend/dist 已有产物）
 python build.py --skip-frontend
 
-# 强制从 trpanel 最新 release 下载 WebUI（跳过本地源码）
-python build.py --trpanel-release
+# 强制从 SeedArk 最新 release 下载 WebUI（跳过本地源码）
+python build.py --seedark-release
 
-# 直接使用预编译的 trpanel 二进制
-python build.py --webui-binary ./trpanel-linux-arm64
+# 直接使用预编译的 seedark 二进制
+python build.py --webui-binary ./seedark-linux-arm64
 
 # 列出可用的 transmission 版本
 python build.py --list-versions
@@ -89,18 +89,18 @@ python build.py --list-versions
 | `--app-version, -v` | 应用版本号（覆盖 manifest） | 读取 manifest |
 | `--transmission-version, -t` | 指定 transmission-daemon 版本 | 应用版本前 3 段 |
 | `--arch, -a` | 目标架构 `arm64` / `amd64` | `arm64` |
-| `--trpanel-src` | 指定本地 trpanel 源码目录构建 WebUI（需 Go + pnpm 11+），优先级最高 | 自动检测 `../trpanel` |
+| `--seedark-src` | 指定本地 SeedArk 源码目录构建 WebUI（需 Go + pnpm 11+），优先级最高 | 自动检测 `../SeedArk` |
 | `--skip-frontend` | 配合本地源码构建：跳过前端 pnpm 构建，复用已有 `frontend/dist` 或 `backend/web/dist` | — |
-| `--webui-binary` | 直接使用指定路径的 linux `trpanel` 二进制，跳过 trpanel 下载 | — |
-| `--trpanel-release` | 强制从 trpanel 最新 release 下载 WebUI，跳过本地源码检测 | — |
+| `--webui-binary` | 直接使用指定路径的 linux `seedark` 二进制，跳过 SeedArk 下载 | — |
+| `--seedark-release` | 强制从 SeedArk 最新 release 下载 WebUI，跳过本地源码检测 | — |
 | `--list-versions` | 列出可用的 transmission 版本 | — |
 
 **构建特性**：
 - **跨平台**：一份脚本在 Windows / Linux / macOS 通用，自动检测平台并选择对应的官方 `fnpack` 构建工具
-- **WebUI 内嵌**：多种来源，按优先级 `--trpanel-src` > `--webui-binary` > 本地 `../trpanel` 自动检测 > release 下载
-  - **本地源码构建**（默认，检测到 `../trpanel`）：在源码目录内执行 `pnpm install --frozen-lockfile` → `pnpm build` → 产物复制到 `backend/web/dist`，再 `CGO_ENABLED=0 GOOS=linux GOARCH=<arch> go build -trimpath ./cmd/server` 交叉编译，与 trpanel 官方 Dockerfile 流程一致；需 Go 与 pnpm 11+
-  - **release 下载**（无本地源码时回退，或 `--trpanel-release` 强制）：从 [trpanel](https://github.com/sushazhi/trpanel) 最新 release 下载对应架构的 `trpanel` 单二进制（Go + React 内嵌前端），以原名放入 `app/bin/`，无需本地 Go/Node 工具链
-  - **预编译二进制**（`--webui-binary <file>`）：直接指定已编译好的 linux `trpanel`
+- **WebUI 内嵌**：多种来源，按优先级 `--seedark-src` > `--webui-binary` > 本地 `../SeedArk` 自动检测 > release 下载
+  - **本地源码构建**（默认，检测到 `../SeedArk`）：在源码目录内执行 `pnpm install --frozen-lockfile` → `pnpm build` → 产物复制到 `backend/web/dist`，再 `CGO_ENABLED=0 GOOS=linux GOARCH=<arch> go build -trimpath ./cmd/server` 交叉编译，与 SeedArk 官方 Dockerfile 流程一致；需 Go 与 pnpm 11+
+  - **release 下载**（无本地源码时回退，或 `--seedark-release` 强制）：从 [SeedArk](https://github.com/sushazhi/SeedArk) 最新 release 下载对应架构的 `seedark` 单二进制（Go + React 内嵌前端），以原名放入 `app/bin/`，无需本地 Go/Node 工具链
+  - **预编译二进制**（`--webui-binary <file>`）：直接指定已编译好的 linux `seedark`
 - **daemon 下载**：自动从 GitHub Releases 获取 musl 静态 `transmission-daemon`（候选资产 `transmission-daemon-musl-<版本>-<架构>` → `transmission-daemon-musl-<架构>` 多级回退），产物缓存在 `.local-build/` 供重复构建复用
 - 构建产物输出到项目根目录：`transmission-<版本>-<架构>.fpk`
 
@@ -109,7 +109,7 @@ python build.py --list-versions
 GitHub Actions（`.github/workflows/build-and-release.yml`）自动为 **arm64** / **amd64** 双架构构建并发布：
 
 - **musl 静态编译** transmission-daemon（Alpine 容器内全静态编译），产物上传至 `v<版本>` release；同名资产已存在时直接复用，手动触发时可勾选 `force_rebuild` 强制重编
-- **fpk 打包**：下载 trpanel 最新 release → 组装应用结构 → `fnpack` 打包 → 上传 artifacts；打 `v*` tag 时自动发布 release（含 fpk）
+- **fpk 打包**：下载 SeedArk 最新 release → 组装应用结构 → `fnpack` 打包 → 上传 artifacts；打 `v*` tag 时自动发布 release（含 fpk）
 - 触发方式：推送 `v*` tag、手动触发（workflow_dispatch）
 - 产物位置：[Releases](https://github.com/sushazhi/fnos-transmission/releases)、CI 运行页面 artifacts
 
@@ -129,7 +129,7 @@ GitHub Actions（`.github/workflows/build-and-release.yml`）自动为 **arm64**
 | 项目 | 默认值 |
 |------|--------|
 | 访问地址 | fnOS 桌面图标（统一网关 `/app/transmission`） |
-| WebUI 服务 | trpanel 直连 fnOS 统一网关（`transmission.sock`） |
+| WebUI 服务 | SeedArk 直连 fnOS 统一网关（`transmission.sock`） |
 | RPC 端口 | 9090 (可在应用设置中修改) |
 | 架构 | ARM64 (aarch64) / amd64 (x86_64) |
 
@@ -143,11 +143,11 @@ GitHub Actions（`.github/workflows/build-and-release.yml`）自动为 **arm64**
 
 ## 🔧 端口配置
 
-本应用采用 fnOS **统一网关**访问（桌面图标或固定网关地址 `/app/transmission`），默认情况下无需修改端口。Web 界面由 `trpanel` 提供（直接监听 fnOS 统一网关 Unix socket，不对外暴露 TCP 端口），界面通过 RPC 连接本机 `transmission-daemon`。
+本应用采用 fnOS **统一网关**访问（桌面图标或固定网关地址 `/app/transmission`），默认情况下无需修改端口。Web 界面由 `seedark`（SeedArk 管理面板）提供（直接监听 fnOS 统一网关 Unix socket，不对外暴露 TCP 端口），界面通过 RPC 连接本机 `transmission-daemon`。
 
 | 服务 | 地址 | 说明 |
 |------|------|------|
-| Web 界面 | `/app/transmission`（网关） | trpanel（Go + React 单二进制，直连网关 socket） |
+| Web 界面 | `/app/transmission`（网关） | SeedArk（Go + React 单二进制，直连网关 socket） |
 | Transmission RPC | 127.0.0.1:9090 | 可在**应用设置**中修改，管理界面自动跟随 |
 
 > 📌 **说明**：通过统一网关访问始终使用固定地址；应用设置中的端口对应 Transmission RPC 服务端口。
@@ -161,8 +161,8 @@ fnos-transmission/
 ├── app/                    # fnOS应用资源
 │   ├── bin/                # 构建产生的可执行文件
 │   │   ├── transmission-daemon  # Transmission守护进程（musl 全静态编译，无动态库依赖）
-│   │   └── trpanel # WebUI 后端（trpanel，Go+React 单二进制，内嵌前端，直连 fnOS 统一网关）
-│   └── ui/                  # 桌面图标与应用入口配置（前端已内嵌于 trpanel）
+│   │   └── seedark # WebUI 后端（SeedArk，原名 trpanel；Go+React 单二进制，内嵌前端，直连 fnOS 统一网关）
+│   └── ui/                  # 桌面图标与应用入口配置（前端已内嵌于 seedark）
 │       ├── config          # 桌面应用配置
 │       └── images/         # 应用图标
 │           ├── icon_64.png # 64x64图标
@@ -208,9 +208,9 @@ fnos-transmission/
 | 项目 | 版本 | 用途 | 许可证 |
 |------|------|------|--------|
 | [Transmission](https://github.com/transmission/transmission) | 4.1.3 | BitTorrent 客户端核心 | [GPL-2.0](https://www.gnu.org/licenses/gpl-2.0.html) |
-| [trpanel](https://github.com/sushazhi/trpanel) | latest | WebUI 管理面板（Go + React 单二进制，内嵌前端） | MIT |
+| [SeedArk](https://github.com/sushazhi/SeedArk) | latest | WebUI 管理面板（Go + React 单二进制，内嵌前端，原名 trpanel） | MIT |
 
-> 📌 **许可证说明**：本应用自身代码（生命周期脚本、构建工具、配置）以 [MIT](LICENSE) 许可证发布；包内聚合分发了 **Transmission（GPL-2.0）** 的 `transmission-daemon` 二进制与 **trpanel（MIT）** 的 WebUI。Transmission 对应源代码与构建脚本的获取方式见 [LICENSE](LICENSE) 中的「Source code offer」。
+> 📌 **许可证说明**：本应用自身代码（生命周期脚本、构建工具、配置）以 [MIT](LICENSE) 许可证发布；包内聚合分发了 **Transmission（GPL-2.0）** 的 `transmission-daemon` 二进制与 **SeedArk（MIT，原名 trpanel）** 的 WebUI。Transmission 对应源代码与构建脚本的获取方式见 [LICENSE](LICENSE) 中的「Source code offer」。
 
 ---
 
@@ -233,7 +233,7 @@ fnos-transmission/
 ### v4.1.3.3
 - ✨ 新增 MCP 独立直连端口（默认 9094），AI 客户端可绕过统一网关直连 `/mcp`
 - 🔧 transmission-daemon 改为 Alpine musl 全静态编译（static-pie，无 glibc 等动态库依赖），CI 自动双架构编译并复用已发布产物
-- ✨ 管理面板升级为 [trpanel](https://github.com/sushazhi/trpanel)（Go+React 单二进制），构建脚本改为从 trpanel 最新 release 自动下载打包
+- ✨ 管理面板升级为 [SeedArk](https://github.com/sushazhi/SeedArk)（Go+React 单二进制，原名 trpanel），构建脚本改为从 SeedArk 最新 release 自动下载打包
 - ✨ 新增打开/选择下载目录（fnOS文件选择器）
 
 ### v4.1.1
@@ -241,4 +241,4 @@ fnos-transmission/
 
 ---
 
-感谢 [Transmission](https://github.com/transmission/transmission) 和 [trpanel](https://github.com/sushazhi/trpanel) 开源项目的支持。
+感谢 [Transmission](https://github.com/transmission/transmission) 和 [SeedArk](https://github.com/sushazhi/SeedArk)（原名 trpanel）开源项目的支持。

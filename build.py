@@ -4,16 +4,16 @@ build.py - Transmission for fnOS 统一打包脚本（跨平台，替代 build.p
 
 用法:
     python build.py [--app-version 4.1.3.2.1] [--transmission-version 4.1.3] [--arch arm64|amd64]
-    python build.py --trpanel-src ../trpanel            # 从本地 trpanel 源码构建 WebUI
-    python build.py --trpanel-src ../trpanel --skip-frontend   # 复用已构建的前端产物
+    python build.py --seedark-src ../SeedArk             # 从本地 SeedArk 源码构建 WebUI
+    python build.py --seedark-src ../SeedArk --skip-frontend   # 复用已构建的前端产物
     python build.py --list-versions
 
 特性:
     - 自动检测操作系统 (Windows/Linux)，选择对应的 fnpack 构建工具
     - 参数与 build.ps1 兼容
-    - WebUI (trpanel) 默认从本地 ../trpanel 源码构建（需 Go + pnpm 11+）；无源码时回退为
-      从 sushazhi/trpanel 最新 release 下载；--trpanel-release 可强制走 release 下载
-    - 也可用 --trpanel-src 指定其他源码目录，或 --webui-binary 指定预编译二进制
+    - WebUI (SeedArk) 默认从本地 ../SeedArk 源码构建（需 Go + pnpm 11+）；无源码时回退为
+      从 sushazhi/SeedArk 最新 release 下载；--seedark-release 可强制走 release 下载
+    - 也可用 --seedark-src 指定其他源码目录，或 --webui-binary 指定预编译二进制
 """
 import argparse
 import json
@@ -32,8 +32,8 @@ FNPACK_BASE = "https://static2.fnnas.com/fnpack/fnpack-1.2.3"
 TRANSMISSION_RELEASES_URL = "https://api.github.com/repos/transmission/transmission/releases"
 GITHUB_RELEASES_URL = "https://github.com/sushazhi/fnos-transmission/releases/download"
 
-# trpanel（Transmission 管理面板，Go+React 单二进制）发布仓库
-TRPANEL_RELEASES_URL = "https://api.github.com/repos/sushazhi/trpanel/releases/latest"
+# SeedArk（Transmission/qBittorrent 管理面板，Go+React 单二进制，原名 trpanel）发布仓库
+SEEDARK_RELEASES_URL = "https://api.github.com/repos/sushazhi/SeedArk/releases/latest"
 
 # 下载代理
 MAIN_PROXY = "https://gh-proxy.com/"
@@ -159,20 +159,20 @@ def is_elf(path):
         return False
 
 
-def download_trpanel(arch, out_path):
-    """从 sushazhi/trpanel 最新 release 下载对应架构的 tar.gz 并解压出 trpanel 二进制。
+def download_seedark(arch, out_path):
+    """从 sushazhi/SeedArk 最新 release 下载对应架构的 tar.gz 并解压出 seedark 二进制。
 
-    产物命名：trpanel-v<ver>-linux-<arch>.tar.gz，解压后为单个可执行文件 trpanel。
+    产物命名：seedark-<tag>-linux-<arch>.tar.gz（tag 含 v 前缀），解压后为单个可执行文件 seedark。
     返回 (ok, error_message)。
     """
     try:
-        rel = fetch_json(TRPANEL_RELEASES_URL)
+        rel = fetch_json(SEEDARK_RELEASES_URL)
     except Exception as e:
-        return False, f"获取 trpanel 最新 release 失败: {e}"
-    tag = rel.get("tag_name", "").lstrip("v")
+        return False, f"获取 SeedArk 最新 release 失败: {e}"
+    tag = rel.get("tag_name", "")
     if not tag:
-        return False, "trpanel release 缺少 tag_name"
-    asset_name = f"trpanel-v{tag}-linux-{arch}.tar.gz"
+        return False, "SeedArk release 缺少 tag_name"
+    asset_name = f"seedark-{tag}-linux-{arch}.tar.gz"
     asset_url = None
     for a in rel.get("assets", []):
         if a.get("name") == asset_name:
@@ -180,18 +180,18 @@ def download_trpanel(arch, out_path):
             break
     if not asset_url:
         names = [a.get("name") for a in rel.get("assets", [])]
-        return False, f"trpanel release v{tag} 中未找到 {asset_name}（可用: {names}）"
+        return False, f"SeedArk release {tag} 中未找到 {asset_name}（可用: {names}）"
 
     tarball = os.path.join(BUILD_DIR, asset_name)
     if os.path.exists(tarball) and os.path.getsize(tarball) > 0:
         log(f"  Using cached tarball: {asset_name}", "green")
     else:
-        log(f"  Downloading trpanel v{tag} ({asset_name})...", "gray")
+        log(f"  Downloading SeedArk {tag} ({asset_name})...", "gray")
         if not download_proxy(asset_url, tarball, asset_name):
             return False, f"下载 {asset_name} 失败"
 
-    # 解压 tar.gz，取出 trpanel 二进制
-    extract_dir = os.path.join(BUILD_DIR, f"trpanel-extract-{arch}")
+    # 解压 tar.gz，取出 seedark 二进制
+    extract_dir = os.path.join(BUILD_DIR, f"seedark-extract-{arch}")
     shutil.rmtree(extract_dir, ignore_errors=True)
     os.makedirs(extract_dir, exist_ok=True)
     try:
@@ -205,19 +205,19 @@ def download_trpanel(arch, out_path):
     except Exception as e:
         return False, f"解压 {asset_name} 失败: {e}"
 
-    # 在解压目录中定位 trpanel 可执行文件
+    # 在解压目录中定位 seedark 可执行文件
     found = None
     for root, _dirs, files in os.walk(extract_dir):
         for f in files:
-            if f == "trpanel":
+            if f == "seedark":
                 found = os.path.join(root, f)
                 break
         if found:
             break
     if not found or not os.path.isfile(found) or os.path.getsize(found) == 0:
-        return False, f"解压后未找到 trpanel 可执行文件（{asset_name}）"
+        return False, f"解压后未找到 seedark 可执行文件（{asset_name}）"
     shutil.copy2(found, out_path)
-    log(f"  trpanel v{tag} extracted to {os.path.basename(out_path)}", "green")
+    log(f"  SeedArk {tag} extracted to {os.path.basename(out_path)}", "green")
     return True, ""
 
 
@@ -234,10 +234,10 @@ def _tail(proc, n=500):
     return out.decode("utf-8", "replace")[-n:]
 
 
-def build_trpanel_from_src(src_dir, arch, out_path, skip_frontend=False):
-    """从本地 trpanel 源码目录构建 linux trpanel 二进制。
+def build_seedark_from_src(src_dir, arch, out_path, skip_frontend=False):
+    """从本地 SeedArk 源码目录构建 linux seedark 二进制。
 
-    流程与 trpanel 官方 Dockerfile 一致：
+    流程与 SeedArk 官方 Dockerfile 一致：
       1) frontend: pnpm install --frozen-lockfile && pnpm build  -> frontend/dist
       2) 复制 frontend/dist -> backend/web/dist（Go 侧通过 //go:embed web/dist 内嵌）
       3) backend: CGO_ENABLED=0 GOOS=linux GOARCH=<arch> go build -trimpath ./cmd/server
@@ -250,7 +250,7 @@ def build_trpanel_from_src(src_dir, arch, out_path, skip_frontend=False):
     web_dist = os.path.join(backend_dir, "web", "dist")
 
     if not os.path.isfile(os.path.join(backend_dir, "cmd", "server", "main.go")):
-        return False, f"在 {src_dir} 中未找到 backend/cmd/server/main.go（不是有效的 trpanel 源码目录）"
+        return False, f"在 {src_dir} 中未找到 backend/cmd/server/main.go（不是有效的 SeedArk 源码目录）"
 
     # ---- 前端（可选跳过，复用已构建产物）----
     if skip_frontend:
@@ -266,7 +266,7 @@ def build_trpanel_from_src(src_dir, arch, out_path, skip_frontend=False):
     else:
         pnpm_bin = shutil.which("pnpm")
         if not pnpm_bin:
-            return False, "未找到 pnpm（trpanel 前端需 pnpm 11+；也可用 --skip-frontend 复用已有产物）"
+            return False, "未找到 pnpm（SeedArk 前端需 pnpm 11+；也可用 --skip-frontend 复用已有产物）"
         env = dict(os.environ)
         env.setdefault("CI", "true")
         log("  Installing frontend deps (pnpm install --frozen-lockfile)...", "gray")
@@ -295,7 +295,7 @@ def build_trpanel_from_src(src_dir, arch, out_path, skip_frontend=False):
     env["GOOS"] = "linux"
     env["GOARCH"] = arch
     env["CGO_ENABLED"] = "0"
-    log(f"  Cross-compiling trpanel (linux/{arch})...", "gray")
+    log(f"  Cross-compiling seedark (linux/{arch})...", "gray")
     proc = _run_cmd(
         [go_bin, "build", "-trimpath", "-ldflags", "-s -w", "-o", out_path, "./cmd/server"],
         cwd=backend_dir, env=env,
@@ -310,10 +310,10 @@ def main():
     parser.add_argument("--app-version", "-v", default="", help="应用版本号（默认读 manifest，覆盖输出文件名与包内 manifest 的 version 行）")
     parser.add_argument("--transmission-version", "-t", default="", help="指定 transmission-daemon 版本")
     parser.add_argument("--arch", "-a", default="arm64", choices=["arm64", "amd64"], help="目标架构")
-    parser.add_argument("--trpanel-src", default="", help="从本地 trpanel 源码目录构建 WebUI（需 Go + pnpm 11+），优先级高于 --webui-binary 与 release 下载")
+    parser.add_argument("--seedark-src", default="", help="从本地 SeedArk 源码目录构建 WebUI（需 Go + pnpm 11+），优先级高于 --webui-binary 与 release 下载")
     parser.add_argument("--skip-frontend", action="store_true", help="配合本地源码构建：跳过前端 pnpm 构建，复用已有 frontend/dist 或 backend/web/dist")
-    parser.add_argument("--webui-binary", default="", help="直接使用指定路径的 linux trpanel 二进制，跳过 trpanel 下载")
-    parser.add_argument("--trpanel-release", action="store_true", help="跳过本地源码检测，强制从 trpanel 最新 release 下载 WebUI")
+    parser.add_argument("--webui-binary", default="", help="直接使用指定路径的 linux seedark 二进制，跳过 SeedArk 下载")
+    parser.add_argument("--seedark-release", action="store_true", help="跳过本地源码检测，强制从 SeedArk 最新 release 下载 WebUI")
     parser.add_argument("--list-versions", action="store_true", help="列出可用的 transmission 版本")
     args = parser.parse_args()
 
@@ -416,26 +416,28 @@ def main():
     if os.name != "nt":
         os.chmod(daemon_target, 0o755)
 
-    # [4/5] WebUI（trpanel 单二进制，Go+React 内嵌前端；默认本地源码构建，回退 release 下载）
-    log("[4/5] Preparing WebUI (trpanel)...", "yellow")
-    manager_target = os.path.join(BUILD_DIR, "app", "bin", "trpanel")
+    # [4/5] WebUI（SeedArk 单二进制，Go+React 内嵌前端；默认本地源码构建，回退 release 下载）
+    log("[4/5] Preparing WebUI (seedark)...", "yellow")
+    manager_target = os.path.join(BUILD_DIR, "app", "bin", "seedark")
     os.makedirs(os.path.dirname(manager_target), exist_ok=True)
 
-    # WebUI 来源优先级：--trpanel-src > --webui-binary > 本地 ../trpanel 自动检测 > release 下载
-    src_dir = args.trpanel_src
-    if not src_dir and not args.webui_binary and not args.trpanel_release:
-        auto_src = os.path.join(os.path.dirname(PROJECT_DIR), "trpanel")
-        if os.path.isfile(os.path.join(auto_src, "backend", "cmd", "server", "main.go")):
-            src_dir = auto_src
-            log(f"  Detected local trpanel source: {auto_src}（--trpanel-release 可改用 release 下载）", "gray")
+    # WebUI 来源优先级：--seedark-src > --webui-binary > 本地 ../SeedArk 自动检测 > release 下载
+    src_dir = args.seedark_src
+    if not src_dir and not args.webui_binary and not args.seedark_release:
+        for name in ("SeedArk", "seedark"):
+            auto_src = os.path.join(os.path.dirname(PROJECT_DIR), name)
+            if os.path.isfile(os.path.join(auto_src, "backend", "cmd", "server", "main.go")):
+                src_dir = auto_src
+                log(f"  Detected local SeedArk source: {auto_src}（--seedark-release 可改用 release 下载）", "gray")
+                break
 
     if src_dir:
         # 从本地源码构建（Go 交叉编译 + 可选 pnpm 前端构建）
-        ok, err = build_trpanel_from_src(src_dir, arch, manager_target, args.skip_frontend)
+        ok, err = build_seedark_from_src(src_dir, arch, manager_target, args.skip_frontend)
         if not ok:
-            log(f"  ERROR: 从本地源码构建 trpanel 失败: {err}", "red")
+            log(f"  ERROR: 从本地源码构建 SeedArk 失败: {err}", "red")
             sys.exit(1)
-        log(f"  Built trpanel from source: {src_dir}", "green")
+        log(f"  Built seedark from source: {src_dir}", "green")
     elif args.webui_binary:
         # 直接使用预编译二进制
         if not os.path.isfile(args.webui_binary) or os.path.getsize(args.webui_binary) == 0:
@@ -444,10 +446,10 @@ def main():
         shutil.copy2(args.webui_binary, manager_target)
         log(f"  Using provided binary: {args.webui_binary}", "green")
     else:
-        # 从 trpanel 最新 release 下载对应架构二进制，解压出的 trpanel 直接以原名落入 app/bin/
-        ok, err = download_trpanel(arch, manager_target)
+        # 从 SeedArk 最新 release 下载对应架构二进制，解压出的 seedark 直接以原名落入 app/bin/
+        ok, err = download_seedark(arch, manager_target)
         if not ok:
-            log(f"  ERROR: 获取 trpanel 失败: {err}", "red")
+            log(f"  ERROR: 获取 SeedArk 失败: {err}", "red")
             sys.exit(1)
     if os.name != "nt":
         os.chmod(manager_target, 0o755)

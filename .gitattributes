@@ -1,3 +1,7 @@
 # 排除 artifacts 和 builds 目录，不包含在 GitHub 自动生成的源码压缩包中
 artifacts/ export-ignore
 builds/ export-ignore
+
+# cmd/ 下均为 fnOS 生命周期 shell 脚本，强制 LF：Windows 检出（core.autocrlf=true）会转成
+# CRLF，行尾 \r 会让脚本在 fnOS 上执行报错，且 build.py 直接从工作区复制打包，CRLF 会进 fpk
+cmd/* text eol=lf

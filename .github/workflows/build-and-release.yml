@@ -1,7 +1,7 @@
 name: Build and Release Transmission for fnOS
 
 # 单一发布 workflow：Alpine musl 全静态编译 transmission-daemon（arm64/amd64），
-# 打包 trpanel WebUI 与 fnpack 产出 fpk，daemon 资产回传 release v${TRANSMISSION_VERSION}
+# 打包 SeedArk WebUI 与 fnpack 产出 fpk，daemon 资产回传 release v${TRANSMISSION_VERSION}
 # （原 musl-daemon.yml 已合并至此）。
 #
 # 触发：
@@ -185,46 +185,50 @@ jobs:
           chmod +x app/bin/transmission-daemon
           echo "Project files copied"
 
-      - name: Download trpanel (WebUI manager)
+      - name: Download SeedArk (WebUI manager)
         run: |
           ARCH="${{ matrix.arch }}"
-          # 解析 trpanel 最新 release
-          TAG=$(curl -s https://api.github.com/repos/sushazhi/trpanel/releases/latest | sed -n 's/.*"tag_name": "v\([^"]*\)".*/\1/p')
+          # 解析 SeedArk 最新 release
+          TAG=$(curl -s https://api.github.com/repos/sushazhi/SeedArk/releases/latest | sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p')
           if [ -z "$TAG" ]; then
-            echo "ERROR: Failed to resolve trpanel latest release"
+            echo "ERROR: Failed to resolve SeedArk latest release"
             exit 1
           fi
-          ASSET="trpanel-v${TAG}-linux-${ARCH}.tar.gz"
+          # 资产名与 SeedArk release.yml 一致：seedark-<tag>-linux-<arch>.tar.gz（tag 含 v 前缀）
+          ASSET="seedark-${TAG}-linux-${ARCH}.tar.gz"
           echo "Downloading ${ASSET}..."
-          wget -q "https://github.com/sushazhi/trpanel/releases/download/v${TAG}/${ASSET}" -O /tmp/trpanel.tar.gz
-          if [ ! -s /tmp/trpanel.tar.gz ]; then
+          wget -q "https://github.com/sushazhi/SeedArk/releases/download/${TAG}/${ASSET}" -O /tmp/seedark.tar.gz
+          if [ ! -s /tmp/seedark.tar.gz ]; then
             echo "ERROR: Failed to download ${ASSET}"
+            echo "SeedArk release ${TAG} 现有资产："
+            curl -s https://api.github.com/repos/sushazhi/SeedArk/releases/latest | sed -n 's/.*"name": "\([^"]*\.tar\.gz\)".*/  \1/p'
+            echo "提示：trpanel 时期的旧资产（trpanel-*）与 SA_* 环境变量不兼容，需推送新的 SeedArk tag 重新发布"
             exit 1
           fi
-          mkdir -p /tmp/trpanel-extract
-          tar -xzf /tmp/trpanel.tar.gz -C /tmp/trpanel-extract
-          # 定位 trpanel 可执行文件并命名为 trpanel（与本地 build.py / cmd 脚本一致）
-          TRPANEL_BIN=$(find /tmp/trpanel-extract -type f -name "trpanel" | head -1)
-          if [ -z "$TRPANEL_BIN" ] || [ ! -s "$TRPANEL_BIN" ]; then
-            echo "ERROR: trpanel binary not found in ${ASSET}"
+          mkdir -p /tmp/seedark-extract
+          tar -xzf /tmp/seedark.tar.gz -C /tmp/seedark-extract
+          # 定位 seedark 可执行文件并命名为 seedark（与本地 build.py / cmd 脚本一致）
+          SEEDARK_BIN=$(find /tmp/seedark-extract -type f -name "seedark" | head -1)
+          if [ -z "$SEEDARK_BIN" ] || [ ! -s "$SEEDARK_BIN" ]; then
+            echo "ERROR: seedark binary not found in ${ASSET}"
             exit 1
           fi
-          cp "$TRPANEL_BIN" app/bin/trpanel
-          chmod +x app/bin/trpanel
-          echo "trpanel v${TAG} extracted to trpanel"
+          cp "$SEEDARK_BIN" app/bin/seedark
+          chmod +x app/bin/seedark
+          echo "SeedArk ${TAG} extracted to seedark"
 
       - name: Verify binaries
         run: |
           echo "Binary verification:"
           file app/bin/transmission-daemon
-          file app/bin/trpanel
+          file app/bin/seedark
           ls -lh app/bin/
           if [ ! -s app/bin/transmission-daemon ]; then
             echo "ERROR: transmission-daemon not found"
             exit 1
           fi
-          if [ ! -s app/bin/trpanel ]; then
-            echo "ERROR: trpanel not found"
+          if [ ! -s app/bin/seedark ]; then
+            echo "ERROR: seedark not found"
             exit 1
           fi
 
@@ -284,7 +288,7 @@ jobs:
 
           **Components:**
           - Transmission daemon: ${{ matrix.arch }} musl 全静态（Alpine 编译，miniupnpc 内嵌）
-          - WebUI: trpanel (Go+React 单二进制) ${{ matrix.arch }}
+          - WebUI: seedark (Go+React 单二进制) ${{ matrix.arch }}
 
           **Build Artifacts:**
           - Package: \`${PACKAGE_NAME}\`

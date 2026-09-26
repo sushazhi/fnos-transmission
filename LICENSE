@@ -63,7 +63,10 @@ years is hereby made: any third party may request the complete corresponding
 source code by opening an issue at
 https://github.com/sushazhi/fnos-transmission/issues.
 
-#### trpanel (MIT)
+#### SeedArk (MIT)
+
+The bundled WebUI panel is SeedArk (formerly named trpanel), built from
+https://github.com/sushazhi/SeedArk.
 
 ```
 Copyright (c) 2026 sushazhi

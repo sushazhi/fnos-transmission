@@ -68,8 +68,8 @@ if ! chmod +x "$BIN_DIR/transmission-daemon" 2>/dev/null; then
     error_exit "错误：设置可执行权限失败，升级完成但服务可能无法启动"
 fi
 
-# WebUI 后端（trpanel）可执行权限
-chmod +x "$BIN_DIR/trpanel" 2>/dev/null || echo "警告：无法设置 trpanel 可执行权限"
+# WebUI 后端（SeedArk，原名 trpanel）可执行权限
+chmod +x "$BIN_DIR/seedark" 2>/dev/null || echo "警告：无法设置 seedark 可执行权限"
 
 # 验证二进制文件
 echo "[2/3] 验证新安装..."
@@ -207,7 +207,7 @@ if [ $EXIT_CODE -eq 0 ]; then
     echo "Transmission 升级成功完成！"
     echo "=================================="
     echo ""
-    echo "网关模式: /app/transmission -> 127.0.0.1:8080 (trpanel)"
+    echo "网关模式: /app/transmission -> 127.0.0.1:8080 (seedark)"
     exit 0
 else
     echo ""

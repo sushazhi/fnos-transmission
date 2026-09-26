@@ -8,9 +8,9 @@ CONFIG_DIR="${DATA_DIR}/settings.json"
 PID_FILE="${TRIM_PKGTMP}/${APP_NAME}.pid"
 LOG_FILE="${TRIM_PKGVAR}/${APP_NAME}.log"
 
-# WebUI 由 trpanel 提供（Go+React 单二进制，内嵌前端）。
+# WebUI 由 SeedArk 提供（Go+React 单二进制，内嵌前端；原名 trpanel）。
 # manager 直接监听 fnOS 统一网关的 Unix socket（无中间代理层）。
-MANAGER_BIN="${BIN_DIR}/trpanel"
+MANAGER_BIN="${BIN_DIR}/seedark"
 MANAGER_PID_FILE="${TRIM_PKGTMP}/${APP_NAME}-manager.pid"
 MANAGER_DATA_DIR="${DATA_DIR}/manager"
 GATEWAY_SOCK="${TRIM_APPDEST}/transmission.sock"
@@ -19,7 +19,7 @@ GATEWAY_PREFIX="/app/transmission"
 # MCP 专用直连端口（AI 客户端经该端口直连 /mcp，绕过统一网关；0 关闭；可被环境变量覆盖）
 MCP_PORT="${MCP_PORT:-9094}"
 
-# daemon RPC 端口（内部值，不暴露给用户；manager 通过 TR_URL 连接此端口）
+# daemon RPC 端口（内部值，不暴露给用户；manager 通过 SA_URL 连接此端口）
 WEBUI_PORT="9090"
 
 # 检查环境变量
@@ -139,7 +139,7 @@ PYEOF
 }
 
 read_rpc_creds() {
-    # 从 .rpc_secret 读取 RPC 明文凭证（user:pass），供 trpanel 连接 daemon 使用
+    # 从 .rpc_secret 读取 RPC 明文凭证（user:pass），供 SeedArk 连接 daemon 使用
     RPC_USER="transmission"
     RPC_PASS=""
     local secret_file="${DATA_DIR}/.rpc_secret"
@@ -151,7 +151,7 @@ read_rpc_creds() {
 
 start_manager() {
     if [ ! -f "$MANAGER_BIN" ]; then
-        echo "Warning: trpanel not found, WebUI unavailable"
+        echo "Warning: seedark not found, WebUI unavailable"
         return 1
     fi
     if [ ! -x "$MANAGER_BIN" ]; then
@@ -161,7 +161,7 @@ start_manager() {
     if [ -f "$MANAGER_PID_FILE" ]; then
         local MPID=$(cat "$MANAGER_PID_FILE")
         if kill -0 "$MPID" 2>/dev/null; then
-            echo "trpanel is already running (PID: $MPID)"
+            echo "seedark is already running (PID: $MPID)"
             return 0
         fi
         rm -f "$MANAGER_PID_FILE"
@@ -171,6 +171,12 @@ start_manager() {
     read_rpc_creds
     mkdir -p "$MANAGER_DATA_DIR"
 
+    # 面板更名（trpanel -> SeedArk）迁移状态文件，保留用户已配置的策略与设置。
+    # 仅当新版状态文件缺失时复制，旧文件保留以便回滚；两者 JSON 结构兼容。
+    if [ -f "${MANAGER_DATA_DIR}/tm-state.json" ] && [ ! -f "${MANAGER_DATA_DIR}/sa-state.json" ]; then
+        cp -p "${MANAGER_DATA_DIR}/tm-state.json" "${MANAGER_DATA_DIR}/sa-state.json" 2>/dev/null || true
+    fi
+
     # 升级/重装场景：清理旧版本残留的 gateway-proxy 代理进程与 socket，
     # 确保网关入口由 manager 直接接管（否则旧进程会占用 GATEWAY_SOCK）
     pkill -f "gateway-proxy.py.*${GATEWAY_SOCK}" 2>/dev/null || true
@@ -179,17 +185,17 @@ start_manager() {
     # 通过环境变量注入连接配置（优先级最高，覆盖 .env/.env.local/config.yaml）
     # SERVER_SOCKET：直接监听 fnOS 网关 Unix socket；GATEWAY_PREFIX：网关路径前缀
     # SERVER_HOST/MCP_PORT：MCP 专用直连 TCP 端口（界面 API 不经 TCP 暴露，仅 /mcp）
-    # TM_PLATFORM：显式指定宿主平台为 fnOS，启用文件选择器/打开目录/更新等专属能力
+    # SA_PLATFORM：显式指定宿主平台为 fnOS，启用文件选择器/打开目录/更新等专属能力
     # TRIM_API_TOKEN：宿主注入的开放 API 令牌（语义路径转换用），仅透传进程环境，不落盘不打日志
-    TR_URL="http://127.0.0.1:${WEBUI_PORT}/transmission/rpc" \
-    TR_USER="${RPC_USER}" \
-    TR_PASS="${RPC_PASS}" \
+    SA_URL="http://127.0.0.1:${WEBUI_PORT}/transmission/rpc" \
+    SA_USER="${RPC_USER}" \
+    SA_PASS="${RPC_PASS}" \
     SERVER_SOCKET="${GATEWAY_SOCK}" \
     GATEWAY_PREFIX="${GATEWAY_PREFIX}" \
     SERVER_HOST="0.0.0.0" \
     MCP_PORT="${MCP_PORT}" \
-    TM_PLATFORM="fnos" \
-    TM_DATA_DIR="${MANAGER_DATA_DIR}" \
+    SA_PLATFORM="fnos" \
+    SA_DATA_DIR="${MANAGER_DATA_DIR}" \
     TRIM_API_TOKEN="${TRIM_API_TOKEN}" \
     GIN_MODE="release" \
     LOG_LEVEL="warn" \
@@ -207,10 +213,10 @@ start_manager() {
         sleep 0.2
     done
     if kill -0 "$MPID" 2>/dev/null; then
-        echo "trpanel started (PID: $MPID) on ${GATEWAY_SOCK}"
+        echo "seedark started (PID: $MPID) on ${GATEWAY_SOCK}"
         return 0
     fi
-    echo "Warning: trpanel failed to start, WebUI unavailable"
+    echo "Warning: seedark failed to start, WebUI unavailable"
     rm -f "$MANAGER_PID_FILE"
     return 1
 }
@@ -233,10 +239,11 @@ stop_manager() {
         rm -f "$MANAGER_PID_FILE"
     fi
     # 兜底：清理残留 manager 进程（仅匹配本应用二进制路径）
+    pkill -f "${BIN_DIR}/seedark" 2>/dev/null || true
+    # 兼容旧版本残留进程：trpanel（v4.1.3.3）与 transmission-manager（v4.1.3.2.32 及更早）
     pkill -f "${BIN_DIR}/trpanel" 2>/dev/null || true
-    # 兼容旧版本（v4.1.3.2.32 及更早）残留进程：当时二进制名为 transmission-manager
     pkill -f "${BIN_DIR}/transmission-manager" 2>/dev/null || true
-    echo "trpanel stopped"
+    echo "seedark stopped"
 }
 
 start() {
@@ -443,7 +450,7 @@ status() {
         if [ -f "$MANAGER_PID_FILE" ]; then
             MPID=$(cat "$MANAGER_PID_FILE")
             if kill -0 "$MPID" 2>/dev/null; then
-                echo "trpanel 正在运行 (PID: $MPID)"
+                echo "seedark 正在运行 (PID: $MPID)"
             fi
         fi
         return 0

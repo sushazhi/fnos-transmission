@@ -14,8 +14,8 @@ if ! chmod +x "$BIN_DIR/transmission-daemon" 2>/dev/null; then
     exit 1
 fi
 
-# WebUI 后端（trpanel）可执行权限
-chmod +x "$BIN_DIR/trpanel" 2>/dev/null || echo "警告：无法设置 trpanel 可执行权限"
+# WebUI 后端（SeedArk）可执行权限
+chmod +x "$BIN_DIR/seedark" 2>/dev/null || echo "警告：无法设置 seedark 可执行权限"
 
 # 获取用户配置（从向导或环境变量）
 # 重装/升级时留空用户名和密码将保留已有配置
@@ -159,7 +159,7 @@ echo "=================================="
 echo "Transmission 安装完成"
 echo "=================================="
 echo ""
-echo "网关模式: /app/transmission -> 127.0.0.1:8080 (trpanel)"
+echo "网关模式: /app/transmission -> 127.0.0.1:8080 (seedark)"
 echo ""
 echo "下载目录: ${SAVE_PATH}"
 echo "数据目录: $DATA_DIR"
