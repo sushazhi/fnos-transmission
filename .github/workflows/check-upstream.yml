@@ -1,0 +1,308 @@
+name: 月末检查上游并发布
+
+# 每月最后一天检查上游 transmission/transmission 有没有新版本：
+#   有更新 -> 改 manifest（version + changelog）与 README 版本标注 -> 提交 main
+#             -> 打 tag -> 派发 build-and-release.yml 构建并发布新版本
+#   无更新 -> 不改文件、不提交、不构建，直接跳过（不重复发版）
+#
+# ── 为什么「每月最后一天」写成 28-31 + 运行时判定，而不是 0 0 L * * ──
+# GitHub Actions 的 cron 来自 POSIX cron 实现，`L`（月末）这类扩展并没有被官方
+# 文档列为受支持字段。用不支持的写法最坏情况是「静默不触发」——一个每月才跑一次
+# 的定时任务，不触发时你根本不会注意到，直到几个月后才发现版本早就落后了。
+# 所以这里用**确定受支持**的 `28-31` 窗口，再在 job 里判一次「明天是不是 1 号」：
+#   明天是 1 号  <=>  今天是本月最后一天（28/29/30/31 天四种月份全覆盖）
+# 判定不通过就立刻退出（代价是每月多跑 3 次、每次几秒钟的空转），
+# 换来的是「无论 GitHub 的 cron 语义如何，月末判定都成立」。
+#
+# ── 为什么是独立的 workflow，而不是往 build-and-release.yml 里塞一个 job ──
+# GitHub 有一条硬规则：**用内置 GITHUB_TOKEN 推送 tag，不会触发其它 workflow
+# 运行**（防递归）。所以「定时检查 -> push tag -> 由 tag 触发构建」这条路走不通：
+# tag 会推上去，但构建永远不会开始；更糟的是 pin 已经提交进 main，下次检查会判定
+# 「无更新」，于是这个版本永远拿不到 Release。
+# 例外是 workflow_dispatch / repository_dispatch —— 只有这两个事件被排除在上述
+# 规则之外。于是分工变成：
+#   check-upstream.yml   : 定时检查 -> 改文件 -> 提交 -> 打 tag -> **派发**构建
+#   build-and-release.yml: 被派发后照常构建 -> 建 Release（一行都不用改）
+# 构建逻辑仍然只有一份。
+#
+# ── 为什么直接提交到 main，而不是开 PR ──
+# 需求是「月末自动出包」。开 PR 会卡在人工合并上，自动化的意义就没了。代价是 main
+# 上会出现机器人提交。缓解：改动必须先通过 tools/check_upstream.py 的严格校验
+# （manifest 读写自证、README 版本标注必须精确匹配），校验不过整个 job 失败，
+# 不会有半成品提交进去。
+#
+# ── 幂等 / 自愈 ──
+# 提交成功后 manifest 的 version 已经等于目标版本，下次检查读到同样的上游版本，
+# 判定「无更新」直接跳过，不会重复发版。
+#
+# 「无更新」分支并不是简单退出，而是按 manifest 的**当前**版本补齐 tag 与 Release：
+#   ① 提交成功、但 tag 推送失败（网络抖动/限流）—— 此时 version 已进 main，下个月
+#      判定「无更新」；若就此跳过，这个版本将**永远**拿不到 Release。所以 tag 推送
+#      与提交一样带 3 次重试，且「确保 tag 存在」这一步在无更新时也照跑（tag 不在就补）。
+#   ② Release 缺失，或 Release 在但 `.fpk` 没上传成功 —— 核对 arm64/amd64 两个资产，
+#      缺则补一次派发。（注意不是「tag 在就补」：tag 是我们自己刚补的，判断依据必须是
+#      资产是否真的齐全。）
+# 判断依据始终是「远端实际有什么」，而不是「本地以为做了什么」。
+#
+# ── 手动补发 ──
+# 重发某个版本：Actions 页面手动跑 build-and-release.yml，ref 填对应 tag。
+# 强制重打当前版本：跑本 workflow 并勾上 force（修订号 +1，manifest 会变，会提交）。
+
+on:
+  schedule:
+    # 月末窗口（03:23 UTC = 北京时间 11:23），真正跑不跑由下面的月末判定决定。
+    # 不写 0 分：GitHub 的定时任务在整点会排长队，错开能减少延迟。
+    - cron: '23 3 28-31 * *'
+
+  workflow_dispatch:
+    inputs:
+      force:
+        description: '上游无新版本时也重打一次当前版本（修订号 +1，用于验证流水线）'
+        type: boolean
+        default: false
+      upstream_version:
+        description: '指定上游版本（如 4.1.4）；留空则查询 GitHub 上游最新版'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  # 提交到 main + 打 tag（Release 由 build-and-release.yml 建，那边也有 contents: write）
+  contents: write
+  # 派发 build-and-release.yml —— workflow_dispatch 需要 actions: write
+  actions: write
+
+# 定时任务与手动触发撞在一起时排队而不是并行：两个 run 同时改 manifest 会互相覆盖。
+concurrency:
+  group: check-upstream
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: 月末检查上游并触发发版
+    # 只跑 Python 与 git，不产二进制，所以没有 glibc 约束。
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      update: ${{ steps.check.outputs.update }}
+      newer: ${{ steps.check.outputs.newer }}
+      tag: ${{ steps.check.outputs.tag }}
+      app_version: ${{ steps.check.outputs.app_version }}
+      upstream_version: ${{ steps.check.outputs.upstream_version }}
+      applied: ${{ steps.check.outputs.applied }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          # 要提交、打 tag、推 tag，浅克隆不够用
+          fetch-depth: 0
+          # 不传 ref：定时事件的默认检出就是默认分支（main）的最新提交，
+          # 这正是我们要在其上追加提交的分支。
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      # 定时触发时先判一次「今天是不是本月最后一天」；手动触发时跳过判定。
+      # 这一步放在最前面，判定不过就不会去调 GitHub API，也不会有任何写入。
+      - name: 月末判定（仅定时触发）
+        id: lastday
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" != "schedule" ]; then
+            echo "is_last_day=true" >> "$GITHUB_OUTPUT"
+            echo "事件为 ${EVENT_NAME}（手动触发），跳过月末判定，直接检查上游。"
+            exit 0
+          fi
+          today=$(date -u +%Y-%m-%d)
+          if [ "$(date -u -d '+1 day' +%d)" = "01" ]; then
+            echo "is_last_day=true" >> "$GITHUB_OUTPUT"
+            echo "UTC 日期 ${today}：明天是 1 号，今天是本月最后一天 —— 继续检查上游。"
+          else
+            echo "is_last_day=false" >> "$GITHUB_OUTPUT"
+            echo "UTC 日期 ${today}：明天不是 1 号，今天不是本月最后一天 —— 本次跳过。"
+          fi
+
+      # 把「查上游 -> 比对 manifest 版本 -> 改 manifest（version + changelog）->
+      # 同步 README 版本标注 -> 写盘自证」一次做完。校验不过会非零退出，
+      # 后面的提交就不会发生。
+      # 逻辑放在 tools/check_upstream.py 里而不是写进 YAML，是为了本地能直接复现、
+      # 也能在本地 --detect 干跑。
+      - name: 检查上游版本并改写 manifest
+        id: check
+        if: steps.lastday.outputs.is_last_day == 'true'
+        env:
+          # 只用于抬高 GitHub API 的限流额度（匿名 60 次/小时），不需要额外权限
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE: ${{ inputs.force }}
+          UPSTREAM_VERSION: ${{ inputs.upstream_version }}
+        run: |
+          set -euo pipefail
+          args=(--apply)
+          if [ -n "${UPSTREAM_VERSION}" ]; then
+            echo "指定上游版本：${UPSTREAM_VERSION}"
+            args+=(--upstream-version "${UPSTREAM_VERSION}")
+          fi
+          if [ "${FORCE}" = "true" ]; then
+            echo "force=true —— 即使上游无新版本也按当前上游重打一次"
+            args+=(--force)
+          fi
+          python3 tools/check_upstream.py "${args[@]}"
+
+      # 无更新时这一步不会跑（update != true），于是「无更新则跳过」是结构上保证的，
+      # 而不是靠脚本里的 if 记得别写错。
+      - name: 提交版本变更到 main
+        if: steps.check.outputs.update == 'true'
+        env:
+          APP_VERSION: ${{ steps.check.outputs.app_version }}
+          UPSTREAM_VERSION: ${{ steps.check.outputs.upstream_version }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # README.md 也要提交：它带两处对外可见的上游版本标注（徽章 + 开源项目表），
+          # 只提交 manifest 会让「随包分发的文档」写着一个过时的版本号。
+          git add manifest README.md
+          if git diff --cached --quiet; then
+            echo "暂存区无改动（version 已是目标值），跳过提交"
+            exit 0
+          fi
+          git commit -m "chore(upstream): 跟进上游 transmission v${UPSTREAM_VERSION}，应用版本 ${APP_VERSION}"
+
+          # 显式写成 refs/heads/main：不依赖本地 HEAD 是否处于分支上。
+          # 重试是必要的：concurrency group 只挡住本 workflow 自己的并发，挡不住人工
+          # 或其它 workflow 往 main 推提交。若恰好在 checkout 之后、push 之前 main
+          # 前进了，push 会被拒。不重试的话 job 直接失败 —— 改动只活在这个 runner 的
+          # 内存里，下次定时运行要等一个月，且 tag 不会创建。
+          # rebase 真冲突时 push 仍会失败并最终 exit 1，不会静默留下坏状态。
+          pushed=0
+          for attempt in 1 2 3; do
+            if git push origin HEAD:refs/heads/main; then
+              pushed=1
+              break
+            fi
+            echo "推送到 main 被拒（第 ${attempt} 次），rebase 到远端后重试"
+            git pull --rebase origin main || true
+            sleep 5
+          done
+          if [ "$pushed" != "1" ]; then
+            echo "ERROR: 3 次尝试后仍无法推送 main"
+            exit 1
+          fi
+          echo "已提交并推送到 main"
+
+      # tag 是 build-and-release.yml 里「是否建 Release」的开关（它检查 github.ref
+      # 是否 refs/tags/v*），所以必须先有 tag 才能派发。
+      # 这一步**不**限定 update == 'true'：见下面「自愈」注释。
+      - name: 确保 tag 存在
+        if: steps.lastday.outputs.is_last_day == 'true'
+        env:
+          TAG: ${{ steps.check.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "tag ${TAG} 已存在"
+            exit 0
+          fi
+          # 这里的重试和「提交到 main」同理，但更要紧：提交一旦成功，manifest 的版本号
+          # 就已经变成新值了；若 tag 推送在这里瞬时失败且不重试，下个月末运行读 manifest
+          # 会判定「无更新」，tag 步骤被跳过 —— 这个版本就**永远**拿不到 Release。
+          # 重试把「一次网络抖动 = 永久丢版」压成极小概率。
+          git tag -f "${TAG}"
+          pushed=0
+          for attempt in 1 2 3; do
+            if git push origin "refs/tags/${TAG}"; then
+              pushed=1
+              break
+            fi
+            echo "推送 tag 被拒（第 ${attempt} 次），重试"
+            sleep 5
+          done
+          if [ "$pushed" != "1" ]; then
+            echo "ERROR: 3 次尝试后仍无法推送 tag ${TAG}"
+            exit 1
+          fi
+          echo "已推送 tag ${TAG}"
+
+      # 派发而不是依赖 push tag：见文件头「为什么是独立的 workflow」。
+      # 派发时把 ref 指定为 tag，这样 build-and-release.yml 里的 github.ref 就是
+      # refs/tags/v*，它自己的 Release 步骤会照常触发。
+      - name: 派发 build-and-release
+        if: steps.lastday.outputs.is_last_day == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.check.outputs.tag }}
+          UPDATE: ${{ steps.check.outputs.update }}
+          APP_VERSION: ${{ steps.check.outputs.app_version }}
+        run: |
+          set -euo pipefail
+          if [ "${UPDATE}" != "true" ]; then
+            # 无更新 ≠ 没事可做。上一步「确保 tag 存在」已经保证 tag 存在，
+            # 这里只判断「Release 是否带齐两个架构包」。
+            #
+            # 为什么不能只看「Release 是否存在」：build-and-release.yml 里 Release 创建成功后，
+            # 上传 .fpk 的步骤即使失败也不会让 job 变红（`|| true`，且重试循环最后一句是 sleep），
+            # 于是会出现「Release 在、但一个 .fpk 都没有」的绿灯假象；只查 release view
+            # 会把它当成已完成，永远不自愈。这里按资产名逐一核对。
+            #
+            # 无更新时 TAG/APP_VERSION 就是「当前 manifest 的版本」，所以这条判断同时覆盖了
+            # 两种半成品：①提交成功但 tag 没推上去（tag 由上一步补）②Release 或 .fpk 缺失。
+            if ! git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+              # 上一步无条件保证 tag 存在，走到这里说明它异常失败/被跳过 —— 不要静默 exit 0
+              # （那正是「永久不发版」的来源），直接报错。
+              echo "ERROR: 无更新分支里 tag ${TAG} 仍不存在，上一步未能创建它"
+              exit 1
+            fi
+            assets=$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' 2>/dev/null || true)
+            missing=""
+            for arch in arm64 amd64; do
+              printf '%s\n' "$assets" | grep -qx "transmission-${APP_VERSION}-${arch}.fpk" || missing="${missing} ${arch}"
+            done
+            if [ -z "${missing}" ]; then
+              echo "上游无更新，且 ${TAG} 的 Release 已含 arm64/amd64 包 —— 无需构建"
+              exit 0
+            fi
+            echo "上游无更新，但 ${TAG} 的 Release 缺少架构包:${missing} —— 补一次构建（自愈）"
+          fi
+          echo "派发 build-and-release.yml，ref=${TAG}"
+          gh workflow run build-and-release.yml --repo "$REPO" --ref "$TAG"
+          # 确认真的开跑了：派发失败时上面的命令会非零退出，但「命令成功、运行却没建
+          # 起来」这种情况也要看得见，所以列一次最近的运行。
+          sleep 10
+          gh run list --repo "$REPO" --workflow=build-and-release.yml --limit 3
+
+      - name: Summary
+        if: always()
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          IS_LAST_DAY: ${{ steps.lastday.outputs.is_last_day }}
+          UPDATE: ${{ steps.check.outputs.update }}
+          NEWER: ${{ steps.check.outputs.newer }}
+          UPSTREAM_VERSION: ${{ steps.check.outputs.upstream_version }}
+          APP_VERSION: ${{ steps.check.outputs.app_version }}
+          TAG: ${{ steps.check.outputs.tag }}
+          REASON: ${{ steps.check.outputs.reason }}
+        run: |
+          {
+            echo "## 上游检查结果"
+            echo
+            if [ "${IS_LAST_DAY}" != "true" ]; then
+              echo "今天不是本月最后一天（事件：\`${EVENT_NAME}\`），本次跳过。"
+            else
+              echo "| 项 | 值 |"
+              echo "| --- | --- |"
+              echo "| 触发方式 | \`${EVENT_NAME}\` |"
+              echo "| 上游有更新 | \`${NEWER:-n/a}\` |"
+              echo "| 需要构建 | \`${UPDATE:-n/a}\` |"
+              echo "| 上游版本 | \`${UPSTREAM_VERSION:-n/a}\` |"
+              echo "| 应用版本 | \`${APP_VERSION:-n/a}\` |"
+              echo "| 发布 tag | \`${TAG:-n/a}\` |"
+              echo
+              echo "**判定：** ${REASON:-n/a}"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
