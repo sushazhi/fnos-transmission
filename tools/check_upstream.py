@@ -9,7 +9,8 @@ releases/download/v<版本> 取源码，在 Alpine 容器里 musl 全静态编�
 但互相关联，漏掉任何一处都会留下不一致的产物：
 
   1. manifest  version    —— x.y.z.N；x.y.z 必须等于上游版本，N 是适配层修订号
-  2. manifest  changelog  —— 版本说明（同时是 Release notes 的来源）
+  2. manifest  changelog  —— 版本说明（同时是 Release notes 的来源）；
+                             **只保留最新版本那一条**，旧版本条目每次都会被丢掉
   3. README.md 徽章        —— badge/Transmission-x.y.z-blue
   4. README.md 开源项目表  —— 「| [Transmission](...) | x.y.z | ...」那一行
 
@@ -56,9 +57,12 @@ TAGS_API = "https://api.github.com/repos/%s/tags?per_page=100" % UPSTREAM_REPO
 # 自动流水线只跟正式版本，预发布要不要跟由人决定。
 VER_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 
-# changelog 最多保留几条版本条目。manifest 的 desc 与 changelog 都会进包内 manifest、
-# 都会显示在应用中心里，不封顶的话会一直长下去。
-MAX_CHANGELOG_ENTRIES = 5
+# changelog 的裁剪策略：**只保留最新版本的那一条条目**，旧版本条目一律丢弃。
+#
+# 没有「保留最近 N 条」的旋钮：需求就是只留最新版本（应用中心的更新说明只该讲这次更新了
+# 什么，累加旧条目只会让 changelog / Release notes 越写越长）。写入前会把 manifest 里已有
+# 的全部版本条目（按 `<br>v<数字>.<数字>.<数字>` 识别）删掉，再放上本次这一条。
+# 见 bump_manifest()。
 
 # README 里两处对外可见的版本标注。各自必须**恰好匹配一处**，否则报错退出。
 README_BADGE_RE = re.compile(r"(badge/Transmission-)(\d+\.\d+\.\d+)(-blue)")
@@ -256,11 +260,22 @@ def make_changelog_entry(app_version, upstream_version, is_new_upstream):
     return "<br>v%s:%s" % (app_version, body)
 
 
+def join_changelog(head, entries):
+    """把 (抬头, [版本条目...]) 拼回 changelog 值。
+
+    抬头为空（changelog 原本没有版本条目）时不要把开头那个 <br> 带进去，
+    否则会写出 `<br>v4.1.4.0:…` 这种以分隔符开头的值。
+    用切片而不是 str.lstrip("<br>")：lstrip 的参数是字符集合，
+    会连带吃掉 'b'/'r' 等字符（这里恰好不触发，但不能靠运气）。
+    """
+    body = "".join(entries)
+    if not head.strip():
+        return body[4:] if body.startswith("<br>") else body
+    return head + body
+
+
 def bump_manifest(text, app_version, upstream_version, is_new_upstream):
     cur = manifest_version(text)
-    if cur == app_version:
-        log("  manifest: version 已是 %s，changelog 保持不变" % app_version)
-        return text, False
 
     # 末尾的 \r 不算值的一部分：CRLF 检出时 (?m)$ 匹配在 \n 前，而 `.` 会吃掉 \r，
     # 不剥掉的话 set_manifest_key 再补一次行尾就写成了 `...\r\r\n`。
@@ -269,27 +284,34 @@ def bump_manifest(text, app_version, upstream_version, is_new_upstream):
         raise SystemExit("ERROR: manifest 里读不到 changelog 行")
 
     head, entries = split_changelog(m.group(1))
-    # 裁剪（只留最近 MAX_CHANGELOG_ENTRIES 条）完全依赖上面那个 `<br>v\d+\.\d+\.\d+` 形态。
-    # 若有人手写了一条不带 v 前缀的条目，entries 会解析成空，于是「只追加、永不裁剪」，
-    # MAX_CHANGELOG_ENTRIES 静默失效 —— 值只会越来越长。这里把它显式说出来。
+    # 「只保留最新一条」完全依赖上面那个 `<br>v\d+\.\d+\.\d+` 形态。若有人手写了一条
+    # 不带 v 前缀的条目，entries 会解析成空，于是旧条目一条都删不掉 —— 裁剪静默失效。
+    # 这里把它显式说出来。
     if not entries and "<br>" in m.group(1):
         log(" 警告: changelog 里有 <br> 但没有可识别的 `v<数字>.<数字>.<数字>` 条目，"
-            "本次只追加不裁剪（%d 条上限未生效）" % MAX_CHANGELOG_ENTRIES)
+            "本次只追加不裁剪（「只保留最新版本」未生效）")
+
+    if cur == app_version:
+        # version 没变 —— 不产生新条目。但仍然把 changelog 裁成「只留最新一条」：
+        # 历史上累加出来的旧条目不该继续留在包里（应用中心的更新说明只讲最新版本）。
+        # 解析不出条目时保持原值不动，不做没有依据的删改。
+        if len(entries) <= 1:
+            log("  manifest: version 已是 %s，changelog 保持不变" % app_version)
+            return text, False
+        text = set_manifest_key(text, "changelog", join_changelog(head, entries[:1]))
+        log("  manifest: version 已是 %s，changelog 裁剪为只保留最新一条（%d -> 1 条）"
+            % (app_version, len(entries)))
+        return text, True
+
     entry = make_changelog_entry(app_version, upstream_version, is_new_upstream)
-    # 抬头为空（changelog 原本没有版本条目）时不要把开头那个 <br> 带进去，
-    # 否则会写出 `<br>v4.1.4.0:…` 这种以分隔符开头的值。
-    # 用切片而不是 str.lstrip("<br>")：lstrip 的参数是字符集合，
-    # 会连带吃掉 'b'/'r' 等字符（这里恰好不触发，但不能靠运气）。
-    if not head.strip():
-        value = (entry[4:] if entry.startswith("<br>") else entry) \
-            + "".join(entries[: MAX_CHANGELOG_ENTRIES - 1])
-    else:
-        value = head + entry + "".join(entries[: MAX_CHANGELOG_ENTRIES - 1])
+    # 只保留最新版本：本次这一条放在最前，manifest 里原有的旧版本条目全部丢弃。
+    # 不累加 —— 否则 changelog 会随每次发版单调变长，而它同时是 Release notes 的来源。
+    value = join_changelog(head, [entry])
 
     text = set_manifest_key(text, "version", app_version)
     text = set_manifest_key(text, "changelog", value)
-    log("  manifest: version %s -> %s，changelog 追加条目（共保留 %d 条）"
-        % (cur, app_version, min(len(entries) + 1, MAX_CHANGELOG_ENTRIES)))
+    log("  manifest: version %s -> %s，changelog 只保留最新条目（丢弃旧条目 %d 条）"
+        % (cur, app_version, len(entries)))
     return text, True
 
 

@@ -120,7 +120,7 @@ GitHub Actions（`.github/workflows/build-and-release.yml`）自动为 **arm64**
 
 | 上游情况 | 动作 |
 |----------|------|
-| **有新版本** | 改 `manifest`（`version` = 上游版本 + 修订号 `0`，并追加 `changelog`）与 README 版本标注 → 提交 `main` → 打 tag `v<版本>` → 派发 `build-and-release.yml` 构建并发布 |
+| **有新版本** | 改 `manifest`（`version` = 上游版本 + 修订号 `0`，`changelog` **只保留最新版本这一条**）与 README 版本标注 → 提交 `main` → 打 tag `v<版本>` → 派发 `build-and-release.yml` 构建并发布 |
 | **无新版本** | 不改任何文件、不提交、不打 tag、不构建，直接跳过 |
 
 版本号规则：`上游版本.适配层修订号`。上游出 `4.1.4` 时自动变为 `4.1.4.0`；上游未变但要重打时（手动勾选 `force`）修订号 +1，如 `4.1.3.5`。
@@ -128,6 +128,7 @@ GitHub Actions（`.github/workflows/build-and-release.yml`）自动为 **arm64**
 - **为什么「月末」用 `28-31` + 运行时判定**：GitHub Actions 的 cron 来自 POSIX cron 实现，`L`（月末）这类扩展没有被官方文档列为受支持字段，最坏情况是静默不触发。因此用确定受支持的 `28-31` 窗口，再在 job 里判一次「明天是不是 1 号」——等价于「今天是本月最后一天」，28/29/30/31 四种月份长度全覆盖。
 - **为什么是独立 workflow**：GitHub 规定「用内置 `GITHUB_TOKEN` 推送 tag 不会触发其它 workflow」（防递归）。所以「定时检查 → push tag → 由 tag 触发构建」走不通，必须显式 `gh workflow run` 派发；只有 `workflow_dispatch` / `repository_dispatch` 被排除在该规则之外。
 - **幂等/自愈**：提交后 manifest 版本已等于目标值，下次检查判定「无更新」直接跳过，不会重复发版。「无更新」分支不是简单退出，而是按 `manifest` 当前版本核对 tag 与 Release，缺什么补什么：①提交成功但 **tag 推送失败** → 下次补 tag；②「提交成功但派发失败」，或「Release 建了但 `.fpk` 上传失败」（`build-and-release.yml` 里上传失败不会让 job 变红）→ 下次核对 `v<版本>` 的 Release 是否**真的带齐 arm64/amd64 两个 `.fpk`**，缺则补一次派发。tag 推送与提交一样带 3 次重试。
+- **`changelog` 只留最新一条**：`manifest` 的 `changelog` 同时是 Release notes 与「应用中心」的更新说明，累加历史条目只会让它随每次发版单调变长。所以每次写入都是「删掉全部旧版本条目 + 只放本次这一条」，不累加。条目识别形态为 `<br>v<数字>.<数字>.<数字>`；识别不出时（例如有人手写了一条不带 `v` 前缀的条目）只追加不裁剪，并打印警告而不是静默失效。
 - **人工指定版本会被校验**：`--apply --upstream-version 4.1.4` 会先确认该版本确实存在于上游 tag，不存在则直接报错——避免把一个**永远构建不出来**的版本号提交进 `main`（那会让构建拉源码 404，而 `main` 上的版本号不会再被自动纠正）。
 - 行尾：`.gitattributes` 对 `manifest`、`README.md`、`cmd/*` 强制 LF。CI 用 `grep`/`cut` 直接解析 `manifest` 取版本号，CRLF 会让 `\r` 混进版本号与包名。
 - 检查逻辑在 [`tools/check_upstream.py`](tools/check_upstream.py)，可本地复现：`python3 tools/check_upstream.py --detect`（只检查不改动）、`--apply`、`--apply --force`、`--apply --upstream-version 4.1.4`。
