@@ -37,7 +37,7 @@ SEEDARK_RELEASES_URL = "https://api.github.com/repos/sushazhi/SeedArk/releases/l
 
 # 下载代理
 MAIN_PROXY = "https://gh.dpik.top/"
-BINARY_PROXY = "https://gh-proxy.org/"
+BINARY_PROXY = "https://v4.gh-proxy.org/"
 
 
 _ANSI_COLORS = {"cyan": "96", "green": "92", "yellow": "93", "red": "91", "gray": "90"}
