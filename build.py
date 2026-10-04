@@ -36,8 +36,8 @@ GITHUB_RELEASES_URL = "https://github.com/sushazhi/fnos-transmission/releases/do
 SEEDARK_RELEASES_URL = "https://api.github.com/repos/sushazhi/SeedArk/releases/latest"
 
 # 下载代理
-MAIN_PROXY = "https://gh-proxy.com/"
-BINARY_PROXY = "https://ghfast.top/"
+MAIN_PROXY = "https://gh.dpik.top/"
+BINARY_PROXY = "https://gh-proxy.org/"
 
 
 _ANSI_COLORS = {"cyan": "96", "green": "92", "yellow": "93", "red": "91", "gray": "90"}
@@ -93,9 +93,14 @@ def get_fnpack_url():
     return f"{FNPACK_BASE}-{plat}-{fnpack_arch}"
 
 
-def download_proxy(url, out_file, description):
-    """依次尝试 MAIN_PROXY -> BINARY_PROXY -> 直连。"""
-    url_list = [MAIN_PROXY + url, BINARY_PROXY + url, url]
+def download_proxy(url, out_file, description, proxy=True):
+    """下载 url 到 out_file。
+
+    proxy=True （默认，GitHub 资源）：依次尝试 直连 -> MAIN_PROXY -> BINARY_PROXY
+    proxy=False（非 GitHub 主机，如 static2.fnnas.com）：只直连，
+                因为 GitHub 加速源只代理 GitHub 域名，套上前缀必然失败。
+    """
+    url_list = [url, MAIN_PROXY + url, BINARY_PROXY + url] if proxy else [url]
     for i, u in enumerate(url_list):
         try:
             if os.path.exists(out_file):
@@ -471,7 +476,7 @@ def main():
         log("  Using cached fnpack", "green")
     else:
         log("  Downloading fnpack...", "yellow")
-        if not download_proxy(fnpack_url, fnpack_path, "fnpack"):
+        if not download_proxy(fnpack_url, fnpack_path, "fnpack", proxy=False):
             sys.exit(1)
     if get_platform() != "windows":
         os.chmod(fnpack_path, 0o755)
