@@ -102,7 +102,7 @@ python build.py --list-versions
   - **release 下载**（无本地源码时回退，或 `--seedark-release` 强制）：从 [SeedArk](https://github.com/sushazhi/SeedArk) 最新 release 下载对应架构的 `seedark` 单二进制（Go + React 内嵌前端），以原名放入 `app/bin/`，无需本地 Go/Node 工具链
   - **预编译二进制**（`--webui-binary <file>`）：直接指定已编译好的 linux `seedark`
 - **daemon 下载**：自动从 GitHub Releases 获取 musl 静态 `transmission-daemon`（候选资产 `transmission-daemon-musl-<版本>-<架构>` → `transmission-daemon-musl-<架构>` 多级回退），产物缓存在 `.local-build/` 供重复构建复用
-- **GitHub 加速下载**：所有 GitHub 资产走 [`tools/gh_mirror.py`](tools/gh_mirror.py) 的加速源（`gh-proxy.com` → `v4.gh-proxy.org` → `ghfast.top` → `ghproxy.imciel.com` → 直连兜底），采用 **2MB 分片 + 8 路并发** 下载：单连接被节点限流在 0.3~0.5 MB/s，并发后才拿得到真实带宽；某一片卡住只换那一片的源。下完统一校验大小 / 魔数 / SHA-256（GitHub 元数据里的 digest），错误页不会被当成成功
+- **GitHub 下载：先直连，超时才加速**：所有 GitHub 资产走 [`tools/gh_mirror.py`](tools/gh_mirror.py)，**优先直连**（不经第三方中转，境外/无墙链路通常最快）；直连 4s 内探测不通、返回错误页或明显龟速时，才按加速源顺序（`gh-proxy.com` → `v4.gh-proxy.org` → `ghfast.top` → `ghproxy.imciel.com`）接手；分片下载中直连卡住则那一片改派加速源并把直连整体降级。采用 **2MB 分片 + 8 路并发** 下载（单连接被节点限流在 0.3~0.5 MB/s，并发后才拿得到真实带宽）。下完统一校验大小 / 魔数 / SHA-256（GitHub 元数据里的 digest），错误页不会被当成成功
 - **加速源清单随包发布**：构建时用本次 fpk 地址实测各加速源，可用的写进 `app/bin/update-mirrors.txt`（供 SeedArk 应用内更新读取），实测全挂则回退默认顺序；`--no-mirror-probe` 可跳过测速
 - 构建产物输出到项目根目录：`transmission-<版本>-<架构>.fpk`
 
@@ -228,6 +228,7 @@ fnos-transmission/
 
 WebUI 检测到新版本后可以直接在界面里下载 fpk 更新包，再按提示在「应用中心 → 手动安装」更新：
 
+- **为什么先直连**：直连不经过第三方中转，既省一跳又免掉「代理节点限流」；代价是墙内直连要等一次超时，所以直连探测超时压到 4s、分片阶段直连无数据 8s 即改派，两次超时就整次降级到加速源，把代价限制在秒级。
 - **为什么要分片并发**：GitHub release 资源在国内经常握手成功却拿不到数据；可用的第三方加速源单连接也被限流在 0.3~0.5 MB/s，**换源并不会更快**。真正的提速手段在于「多连接 + 多源分摊」——2MB 分片、最多 8 路并发，分片轮流分给清单里的加速源。
 - **一致性怎么保证**：各加速源背后是同一个对象（ETag 一致），分片按 `Content-Range` 偏移写回、ETag 与探测基线不符即丢弃换源；拼接后再整文件比对 GitHub 的 SHA-256 摘要。上游只给 MD5 时按 MD5 校验并记日志；经代理下载却**没有任何摘要**时直接拒绝，不拿完整性换速度。
 - **加速源清单**：`app/bin/update-mirrors.txt`，每行一个前缀（`#` 为注释，顺序即优先级），由构建期实测生成；文件缺失或读不到时 seedark 退回内置默认列表。改地址只需改 `tools/gh_mirror.py` 与 SeedArk 的 `UpdateMirrors` 两处（CI 会从 Go 源码里提取清单，双份地址表必须一致）。

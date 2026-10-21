@@ -19,12 +19,26 @@
                       只能当节点切换，不能当灾备
   ghfast.top          独立运营，抖动大
   ghproxy.imciel.com  独立运营，速度中等
-  直连                 常被墙，只作最后兜底
+  直连                 境外链路/无墙环境通常最快，且不经第三方中转：
+                       因此**永远先试直连**，直连慢到超时才切加速源
   已淘汰 gh.dpik.top   实测 279 KB/s，且 API 侧 403
 
 一个重要发现：单连接速度被节点限流，但**并发多连接（哪怕是同一个镜像）能拿到
 数倍带宽**；且所有候选镜像都支持 Range（206 + Content-Range），ETag 也一致。
 所以下载侧的正确做法是「分片并发 + 多镜像轮转」，而不是「串行试镜像、谁快用谁」。
+
+下载顺序（2026-10 调整）
+------------------------
+**直连优先，超时才上加速源**：
+  1. 先用 Range 探测直连：拿到 206 + 正确大小即认为直连可用 → 全部带宽给直连；
+  2. 直连探测超时 / 被拒 / 返回 HTML 错误页 / 明显龟速（探测窗口内低于
+     DIRECT_MIN_SPEED）→ 判定这条链路不通，改走加速源（按 MIRRORS 顺序）；
+  3. 分片下载中直连卡住（无数据超时或被墙的静默限速）→ 该片改派到加速源，
+     并整次下载把直连降级，不再分配新分片；
+  4. 直连与加速源都失败才报错。
+直连的代价是「不通时要白等一次超时」，所以直连探测超时刻意取得很短
+（DIRECT_PROBE_TIMEOUT），用秒级代价换掉「明明直连更快却先绕代理」的一跳。
+
 本模块只用标准库，不引入任何依赖。
 """
 import hashlib
@@ -58,7 +72,10 @@ MIRROR_RE = re.compile(r"^https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+$")
 FPK_MAX_SIZE = 100 * 1024 * 1024      # 100 MB，与应用内更新侧的上限一致
 TOTAL_TIMEOUT = 120                    # 单次下载总时长上限（秒）
 SOCKET_TIMEOUT = 30                    # 单流下载的单次读超时（秒）
-PROBE_TIMEOUT = 12                     # Range 探测超时（秒）
+PROBE_TIMEOUT = 12                     # 镜像 Range 探测超时（秒）
+DIRECT_PROBE_TIMEOUT = 4               # 直连 Range 探测超时（秒）：直连不通时要尽快认输，别让用户白等
+DIRECT_MIN_SPEED = 32 * 1024           # 直连探测窗口内的最低速度（B/s），低于它判为「连得上但被限死」
+DIRECT_STALL_TIMEOUT = 8               # 分片阶段直连的「无数据」超时（秒）：比镜像更严，卡住立刻让位
 
 
 def normalize_mirror(raw):
@@ -120,13 +137,36 @@ def load_manifest(path):
     return list(MIRRORS)
 
 
-def build_urls(url, mirrors=None, direct_last=True):
-    """把一个 GitHub 资源地址展开成候选下载地址：镜像前缀 + 直连兜底。"""
+def build_urls(url, mirrors=None, direct_first=True):
+    """把一个 GitHub 资源地址展开成候选下载地址：默认**直连在前**，镜像按顺序跟在后面。
+
+    direct_first=True（默认）：[url, 镜像1+url, 镜像2+url, ...]
+    direct_first=False       ：[镜像1+url, ..., url]（旧行为，直连兜底）
+    """
     ms = list(MIRRORS if mirrors is None else mirrors)
     urls = [m + url for m in ms]
-    if direct_last:
-        urls.append(url)
+    if direct_first:
+        return [url] + urls
+    urls.append(url)
     return urls
+
+
+def ordered_sources(url, mirrors=None):
+    """下载源序列，元素为空串表示「直连」：("" , 镜像1, 镜像2, ...)。
+
+    与 build_urls 同源，只是用空串表示直连（分片/单流内部统一用「前缀 + url」拼地址）。
+    """
+    ms = list(MIRRORS if mirrors is None else mirrors)
+    return [""] + [m for m in ms if m]
+
+
+def source_url(source, url):
+    """把「源」还原成可请求地址；空串即直连。"""
+    return (source + url) if source else url
+
+
+def _is_direct(source):
+    return not source
 
 
 def sort_mirrors_fastest(mirrors=None, sample_url=None, rounds=1, timeout=10):
@@ -229,8 +269,8 @@ class DownloadError(Exception):
 def download(url, dest, mirrors=None, description="", expected_sha256="",
              expected_size=0, kind="fpk", user_agent="fnos-transmission-build",
              use_mirrors=True, log=None, max_size=FPK_MAX_SIZE,
-             total_timeout=TOTAL_TIMEOUT):
-    """带加速源轮转的下载：镜像按顺序尝试，直连最后兜底。
+             total_timeout=TOTAL_TIMEOUT, direct_first=True):
+    """带加速源轮转的下载：默认**先直连**，直连失败/超时才按顺序试镜像。
 
     与旧实现的区别：
       - 每个源失败后**立即切下一个**，并记录失败原因（旧实现只打印最后一条）；
@@ -241,15 +281,17 @@ def download(url, dest, mirrors=None, description="", expected_sha256="",
     """
     emit = log or (lambda *_: None)
     tmp = dest + ".part"
-    url_list = build_urls(url, mirrors) if use_mirrors else [url]
+    url_list = build_urls(url, mirrors, direct_first=direct_first) if use_mirrors else [url]
     errors = []
     for idx, u in enumerate(url_list):
+        direct = u == url
         try:
             if os.path.exists(tmp):
                 os.remove(tmp)
-            emit("    Trying %s" % (u[:78],))
+            emit("    Trying %s%s" % ("直连 " if direct and use_mirrors else "", u[:78]))
             _fetch_single(u, tmp, user_agent=user_agent, max_size=max_size,
-                          total_timeout=total_timeout, emit=emit)
+                          total_timeout=total_timeout, emit=emit,
+                          socket_timeout=DIRECT_STALL_TIMEOUT if direct and use_mirrors else SOCKET_TIMEOUT)
             ok, reason = verify_payload(tmp, expected_sha256, expected_size, kind)
             if not ok:
                 errors.append("%s: %s" % (u[:60], reason))
@@ -271,10 +313,11 @@ def download(url, dest, mirrors=None, description="", expected_sha256="",
     return False, " | ".join(errors[-3:]) if errors else "所有加速源均失败"
 
 
-def _fetch_single(url, dest, user_agent, max_size, total_timeout, emit):
+def _fetch_single(url, dest, user_agent, max_size, total_timeout, emit,
+                  socket_timeout=SOCKET_TIMEOUT):
     req = urllib.request.Request(url, headers={"User-Agent": user_agent})
     try:
-        resp = urllib.request.urlopen(req, timeout=SOCKET_TIMEOUT)
+        resp = urllib.request.urlopen(req, timeout=socket_timeout)
     except urllib.error.HTTPError as e:
         raise DownloadError("HTTP %d %s" % (e.code, e.reason))
     except urllib.error.URLError as e:
@@ -324,6 +367,8 @@ CHUNK_WORKERS = 8
 MAX_CHUNKS = 96                   # 分片数上限：片太小反而增加请求开销与失败面
 CHUNK_READ_TIMEOUT = 20          # 单个分片「无数据」超时（秒）：卡住的连接要尽快被判死，而不是拖到总超时
 MIRROR_DEGRADE_AFTER = 2         # 某镜像连续失败 N 次即在本次下载中降级
+DIRECT_DEGRADE_AFTER = 2         # 直连分片超时 N 次即在本次下载中降级（改走加速源），
+                                 # 比镜像更早放弃：直连不通时每次重试都要白等一个超时
 # 墙钟改派：一片的正常成本 ≈ 片字节 / 全局估计速度，超过「成本 × 系数」仍未完成就
 # 取消这条连接并改派到别的镜像。实测镜像会「能下但极慢」而不报错，只靠重试等不到它。
 HEDGE_FIRST = 8.0                # 首次改派放宽（容忍瞬时抖动）
@@ -340,13 +385,13 @@ SPEED_MIN_SAMPLES = 2            # 冷启动保护：每镜像至少 2 个样本
 def download_parallel(url, dest, mirrors=None, chunk=CHUNK_SIZE, workers=CHUNK_WORKERS,
                       expected_sha256="", expected_size=0, description="",
                       user_agent="fnos-transmission-build", log=None,
-                      max_size=FPK_MAX_SIZE, max_chunk_retries=3, kind="fpk"):
-    """Range 分片 + 多镜像并发下载；Range 不可用时自动回退单流。
+                      max_size=FPK_MAX_SIZE, max_chunk_retries=3, kind="fpk",
+                      direct_first=True):
+    """Range 分片 + 多源并发下载（先直连，超时才用加速源）；Range 不可用时回退单流。
 
     返回 (ok, reason)。成功后目标文件已原子落位；失败时不留 .part / 半成品。
     """
     emit = log or (lambda *_: None)
-    ms = list(MIRRORS if mirrors is None else mirrors)
     tmp = dest + ".part"
 
     # 必须做：旧产物或旧 .part 先清掉，否则「上次的文件」会被当成「本次成功结果」
@@ -354,15 +399,36 @@ def download_parallel(url, dest, mirrors=None, chunk=CHUNK_SIZE, workers=CHUNK_W
         if os.path.exists(p):
             os.remove(p)
 
-    probe = _probe_range(ms, url, user_agent)
-    if probe is None:
-        emit("    加速源不支持 Range 分片，回退单流下载")
-        return download(url, dest, mirrors=ms, description=description,
-                        expected_sha256=expected_sha256, expected_size=expected_size,
-                        kind=kind, user_agent=user_agent, log=log,
-                        max_size=max_size)
-
-    size, etag = probe
+    ms = [m for m in (MIRRORS if mirrors is None else mirrors) if m]
+    if not direct_first:
+        # 旧行为（加速源优先、直连兜底）：显式要才走这条
+        shim = _probe_range(ms, url, user_agent)
+        if shim is None:
+            emit("    加速源不支持 Range 分片，回退单流下载")
+            return download(url, dest, mirrors=ms, description=description,
+                            expected_sha256=expected_sha256, expected_size=expected_size,
+                            kind=kind, user_agent=user_agent, log=log,
+                            max_size=max_size, direct_first=False)
+        sources, (size, etag) = list(ms), shim
+    else:
+        # 直连优先：先给直连一个很短的 Range 探测窗口。
+        # 直连不通（超时/拒绝/非 206/错误页/龟速）就**不让它参与分片** —— 否则
+        # 8 个 worker 会轮流卡死在同一条不通的链路上，把加速源也一起拖慢。
+        got = _probe_source("", url, user_agent, timeout=DIRECT_PROBE_TIMEOUT,
+                            min_speed=DIRECT_MIN_SPEED)
+        if isinstance(got, tuple):
+            sources, (size, etag) = [""] + ms, got
+            emit("    直连可用，优先走直连（其余 %d 个加速源仅作分片容灾）" % len(ms))
+        else:
+            emit("    直连不可用（%s），改走加速源" % (got.reason,))
+            shim = _probe_range(ms, url, user_agent)
+            if shim is None:
+                emit("    加速源也不支持 Range 分片，回退单流下载")
+                return download(url, dest, mirrors=ms, description=description,
+                                expected_sha256=expected_sha256, expected_size=expected_size,
+                                kind=kind, user_agent=user_agent, log=log,
+                                max_size=max_size, direct_first=True)
+            sources, (size, etag) = list(ms), shim
     if size <= 0 or size > max_size:
         return False, "文件大小异常（%d 字节）" % size
     if expected_size > 0 and size != expected_size:
@@ -379,11 +445,10 @@ def download_parallel(url, dest, mirrors=None, chunk=CHUNK_SIZE, workers=CHUNK_W
     written = [0]
     started_at = time.time()
     degraded = set()
-    streaks = dict((m, 0) for m in ms)
-    speed = {}       # 镜像 -> EWMA 速度（B/s）
-    samples = {}     # 镜像 -> 成功分片数
+    streaks = dict((m, 0) for m in sources)   # 空串=直连，和镜像一样记账
+    speed = {}       # 源 -> EWMA 速度（B/s）
+    samples = {}     # 源 -> 成功分片数
     live = [0]       # 当前在跑的连接数（增量自检用）
-    sources = ms or [""]
 
     def median_speed():
         vals = [speed[m] for m in speed if samples.get(m, 0) >= SPEED_MIN_SAMPLES]
@@ -393,17 +458,27 @@ def download_parallel(url, dest, mirrors=None, chunk=CHUNK_SIZE, workers=CHUNK_W
         return vals[len(vals) // 2]
 
     def pick_source(index, attempt):
-        """按分片轮转分配镜像；跳过已降级的镜像（全部降级时仍轮转兜底）。"""
-        candidates = [m for m in sources if m in ("",) or m not in degraded]
+        """按分片轮转分配源（源码里空串=直连）；跳过已降级的源，全部降级时仍兜底轮转。
+
+        直连优先的语义：只要直连还没被降级，它就是队列里的第一顺位，
+        分片先给直连；直连卡住/被墙后才轮到加速源接手。
+        """
+        candidates = [m for m in sources if m not in degraded]
         if not candidates:
             candidates = list(sources)
         return candidates[(index + attempt) % len(candidates)]
 
-    def hedge_timeout(need, attempt):
-        """单片墙钟上限：正常成本 = 片字节 / 全局速度（无样本时用基线兜底）。"""
+    def hedge_timeout(need, attempt, source=""):
+        """单片墙钟上限：正常成本 = 片字节 / 全局速度（无样本时用基线兜底）。
+
+        直连再额外收紧一档：直连「连得上但被丢包」时不会报错，只会静默慢下来，
+        等它自然超时等于整次下载都被拖住；宁可早点把这一片改派给加速源。
+        """
         sp = median_speed() or BASELINE_SPEED
         cost = need / float(sp)
         d = cost * (HEDGE_FIRST if attempt == 0 else HEDGE_NEXT)
+        if _is_direct(source):
+            d = min(d, DIRECT_STALL_TIMEOUT)
         return max(HEDGE_FLOOR, d)
 
     def arrange_abort():
@@ -439,17 +514,22 @@ def download_parallel(url, dest, mirrors=None, chunk=CHUNK_SIZE, workers=CHUNK_W
             if abort[0]:
                 raise DownloadError("并行下载已被判为无收益")
             m = pick_source(index, attempt)
-            target = (m + url) if m else url
+            target = source_url(m, url)
             started = time.time()
             try:
                 data = _fetch_range(target, start, end, etag, user_agent,
-                                    timeout=min(CHUNK_READ_TIMEOUT, hedge_timeout(need, attempt)))
+                                    timeout=min(CHUNK_READ_TIMEOUT, hedge_timeout(need, attempt, m)))
             except Exception as e:  # noqa: BLE001 - 换源重试，原因留最后一次
                 last = e
                 with lock:
                     if _is_timeout(e):
-                        # 「慢」只改派，不记失败：否则只是慢的镜像会被整轮判死
-                        pass
+                        # 镜像「慢」只改派，不记失败；但**直连**慢/卡住一律记账：
+                        # 直连不通报的是 timeout，不在这里降级它，其余分片还会轮流撞它。
+                        if _is_direct(m):
+                            streaks[m] = streaks.get(m, 0) + 1
+                            if streaks[m] >= DIRECT_DEGRADE_AFTER and m not in degraded:
+                                degraded.add(m)
+                                emit("    直连分片超时 %d 次，本次下载内改走加速源" % streaks[m])
                     else:
                         streaks[m] = streaks.get(m, 0) + 1
                         if streaks[m] >= MIRROR_DEGRADE_AFTER and m not in degraded:
@@ -478,9 +558,9 @@ def download_parallel(url, dest, mirrors=None, chunk=CHUNK_SIZE, workers=CHUNK_W
                             if samples.get(mm, 0) >= SPEED_MIN_SAMPLES and speed[mm] < med * SPEED_SLOW_RATIO:
                                 if mm not in degraded:
                                     degraded.add(mm)
-                                    emit("    镜像 %s 明显偏慢，本次下载内降级" % (mm or "直连",))
+                                    emit("    %s 明显偏慢，本次下载内降级" % ("直连" if _is_direct(mm) else "镜像 " + mm,))
                     emit("    分片 %d/%d（%s，%.1f/%.1fMB）" % (
-                        index + 1, nchunks, (m or "直连").replace("https://", "").strip("/"),
+                        index + 1, nchunks, "直连" if _is_direct(m) else m.replace("https://", "").strip("/"),
                         written[0] / 1048576, size / 1048576))
             except OSError as e:
                 last = e
@@ -520,7 +600,7 @@ def download_parallel(url, dest, mirrors=None, chunk=CHUNK_SIZE, workers=CHUNK_W
         t.start()
         threads.append(t)
 
-    # 监视线程：并行无收益时尽早叫停，交给下面的单流回退
+    # 监视线程：并行无收益时尽早叫停，交给下面的单流回退（单流同样直连优先）
     def monitor():
         while not abort[0] and any(t.is_alive() for t in threads):
             time.sleep(0.5)
@@ -541,7 +621,8 @@ def download_parallel(url, dest, mirrors=None, chunk=CHUNK_SIZE, workers=CHUNK_W
             os.remove(tmp)
         return download(url, dest, mirrors=ms, description=description,
                         expected_sha256=expected_sha256, expected_size=expected_size,
-                        kind=kind, user_agent=user_agent, log=log, max_size=max_size)
+                        kind=kind, user_agent=user_agent, log=log, max_size=max_size,
+                        direct_first=direct_first)
 
     missing = sum(1 for d in done if not d)
     if failures or missing:
@@ -571,8 +652,57 @@ def _is_timeout(exc):
     return "超时" in msg or "timed out" in msg
 
 
+class _ProbeFail(object):
+    """探测失败的原因（用对象而不是 None，方便把「为什么不用直连」写进日志）。"""
+
+    __slots__ = ("reason",)
+
+    def __init__(self, reason):
+        self.reason = reason
+
+
+def _probe_source(source, url, user_agent, timeout=None, min_speed=0):
+    """探测单个源（空串=直连）能否做 Range 分片：可用返回 (size, etag)，否则 _ProbeFail。
+
+    比 _probe_range 严格的地方（正是直连需要的判据）：
+      - 必须 206 + 合法 Content-Range（代理错误页常是 200 + HTML，直接判死）；
+      - 探测窗口要真的读到字节，且速度不低于 min_speed（「连得上但被限死」等于不可用，
+        否则它会被 8 个 worker 分摊成一堆超时，比不用它还慢）。
+    """
+    timeout = timeout or PROBE_TIMEOUT
+    window = 64 * 1024
+    target = source_url(source, url)
+    try:
+        req = urllib.request.Request(target, headers={
+            "User-Agent": user_agent, "Range": "bytes=0-%d" % (window - 1),
+            "Cache-Control": "no-cache"})
+        t0 = time.time()
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            if resp.status != 206:
+                return _ProbeFail("不支持分片（HTTP %d）" % resp.status)
+            rng = parse_content_range(resp.headers.get("Content-Range", ""))
+            if rng is None:
+                return _ProbeFail("Content-Range 缺失或非法")
+            body = resp.read(window)
+            dt = time.time() - t0
+            etag = resp.headers.get("ETag", "")
+    except urllib.error.HTTPError as e:
+        return _ProbeFail("HTTP %d" % e.code)
+    except urllib.error.URLError as e:
+        return _ProbeFail("网络错误: %s" % (e.reason,))
+    except (socket.timeout, TimeoutError):
+        return _ProbeFail("%gs 内无响应（超时）" % timeout)
+    except Exception as e:  # noqa: BLE001
+        return _ProbeFail(str(e)[:60])
+    if not body:
+        return _ProbeFail("探测窗口无数据")
+    speed = len(body) / dt if dt > 0 else 0.0
+    if min_speed and speed < min_speed:
+        return _ProbeFail("速度仅 %.0f KB/s，低于 %.0f KB/s 门槛" % (speed / 1024, min_speed / 1024))
+    return rng[2], ("" if etag.startswith("W/") else etag)
+
+
 def _probe_range(mirrors, url, user_agent):
-    """探测总大小与 ETag 基线；不支持 Range 或全部失败返回 None。"""
     """探测总大小与 ETag 基线；不支持 Range 或全部失败返回 None。"""
     for m in list(mirrors) + [""]:
         try:

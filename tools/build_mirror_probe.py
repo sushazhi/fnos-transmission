@@ -17,6 +17,10 @@ sample-url 的**第一个字节区间**做一次测速，就能得到当天的�
 
 生成的文件：app/bin/update-mirrors.txt（每行一个前缀，'#' 开头为注释）。
 SeedArk 启动时读它；本仓库 build.py 下载资产时也用它。
+
+注意（与下载顺序解耦）：这里的排序只决定**应用内更新要绕加速源时**先试哪个前缀，
+不代表下载会先走加速源 —— tools/gh_mirror.py 的下载链路一律先试直连，直连不通才按
+本清单/MIRRORS 的顺序轮转。
 """
 import argparse
 import os
@@ -97,7 +101,7 @@ def self_test():
 
     check("默认列表非空且无旧代理",
           gh_mirror.MIRRORS and not any(gh_mirror.is_obsolete(m) for m in gh_mirror.MIRRORS))
-    check("首选为 gh-proxy.com", gh_mirror.MIRRORS[0] == "https://gh-proxy.com/",
+    check("加速源首选为 gh-proxy.com", gh_mirror.MIRRORS[0] == "https://gh-proxy.com/",
           str(gh_mirror.MIRRORS[:1]))
     check("归一化补斜杠", gh_mirror.normalize_mirror("https://gh-proxy.com") == "https://gh-proxy.com/")
     check("归一化拒绝非 http", gh_mirror.normalize_mirror("ftp://x/") == "")
@@ -111,12 +115,36 @@ def self_test():
     man = gh_mirror.render_manifest(["https://gh-proxy.com/"], comment="x")
     check("清单含注释与地址", "#" in man and man.strip().endswith("https://gh-proxy.com/"))
 
-    urls = gh_mirror.build_urls("https://github.com/a/b/releases/download/v1/x.fpk",
-                                mirrors=["https://m1/", "https://m2/"])
-    check("URL 展开=镜像×2+直连",
-          urls == ["https://m1/https://github.com/a/b/releases/download/v1/x.fpk",
-                   "https://m2/https://github.com/a/b/releases/download/v1/x.fpk",
-                   "https://github.com/a/b/releases/download/v1/x.fpk"], str(urls))
+    sample = "https://github.com/a/b/releases/download/v1/x.fpk"
+    urls = gh_mirror.build_urls(sample, mirrors=["https://m1/", "https://m2/"])
+    check("URL 展开=直连+镜像×2（直连优先）",
+          urls == [sample,
+                   "https://m1/" + sample,
+                   "https://m2/" + sample], str(urls))
+    urls = gh_mirror.build_urls(sample, mirrors=["https://m1/"], direct_first=False)
+    check("direct_first=False 保持旧的镜像优先",
+          urls == ["https://m1/" + sample, sample], str(urls))
+
+    srcs = gh_mirror.ordered_sources(sample, mirrors=["https://m1/", "https://m2/"])
+    check("源序列首元素为直连", srcs == ["", "https://m1/", "https://m2/"], str(srcs))
+    check("空源=直连原地址", gh_mirror.source_url("", sample) == sample)
+    check("镜像源=前缀+地址", gh_mirror.source_url("https://m1/", sample) == "https://m1/" + sample)
+    check("直连超时短于镜像超时", gh_mirror.DIRECT_PROBE_TIMEOUT < gh_mirror.PROBE_TIMEOUT,
+          "%s vs %s" % (gh_mirror.DIRECT_PROBE_TIMEOUT, gh_mirror.PROBE_TIMEOUT))
+
+    # 直连探测失败必须给「原因」而不是静默 None（日志要能说清为什么不走直连）
+    import socket as _socket
+    orig = gh_mirror.urllib.request.urlopen
+
+    def boom(*a, **k):
+        raise _socket.timeout("timed out")
+    gh_mirror.urllib.request.urlopen = boom
+    try:
+        r = gh_mirror._probe_source("", sample, "ua", timeout=1, min_speed=1024)
+        check("直连超时被判为不可用且带原因",
+              isinstance(r, gh_mirror._ProbeFail) and "超时" in r.reason, str(getattr(r, "reason", r)))
+    finally:
+        gh_mirror.urllib.request.urlopen = orig
 
     # 清单读写往返：不存在时回落默认，旧代理被剔除
     import tempfile

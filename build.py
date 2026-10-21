@@ -99,9 +99,10 @@ def get_fnpack_url():
 
 def download_proxy(url, out_file, description, proxy=True, expected_sha256="",
                    expected_size=0, kind="fpk", mirrors=None):
-    """下载 url 到 out_file（通过加速源，直连兜底）。
+    """下载 url 到 out_file（先直连，直连超时/不通才走加速源）。
 
-    proxy=True （默认，GitHub 资源）：镜像按顺序轮转、直连最后
+    proxy=True （默认，GitHub 资源）：直连优先；直连探测超时（4s）、返回错误页或
+                明显龟速时自动改走加速源。顺序与降级策略全在 tools/gh_mirror.py。
     proxy=False（非 GitHub 主机，如 static2.fnnas.com）：只直连，
                 因为 GitHub 加速源只代理 GitHub 域名，套上前缀必然失败。
     下载后统一做 大小 / 魔数 / SHA-256 校验：加速链路上「下完」不等于「下对」。
