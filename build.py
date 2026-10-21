@@ -35,9 +35,13 @@ GITHUB_RELEASES_URL = "https://github.com/sushazhi/fnos-transmission/releases/do
 # SeedArk（Transmission/qBittorrent 管理面板，Go+React 单二进制，原名 trpanel）发布仓库
 SEEDARK_RELEASES_URL = "https://api.github.com/repos/sushazhi/SeedArk/releases/latest"
 
-# 下载代理
-MAIN_PROXY = "https://gh.dpik.top/"
-BINARY_PROXY = "https://v4.gh-proxy.org/"
+# 加速源与下载实现统一在 tools/gh_mirror.py（地址、顺序、校验、分片下载都只有一份），
+# 这里只做适配：以前 build.py / gateway-proxy.py / SeedArk update.go / CI 各自维护
+# 一份代理地址，改一处漏一处就会「构建能下、应用内更新不能下」。
+sys.path.insert(0, os.path.join(PROJECT_DIR, "tools"))
+import gh_mirror  # noqa: E402
+
+UPDATE_MIRRORS = list(gh_mirror.MIRRORS)
 
 
 _ANSI_COLORS = {"cyan": "96", "green": "92", "yellow": "93", "red": "91", "gray": "90"}
@@ -93,23 +97,38 @@ def get_fnpack_url():
     return f"{FNPACK_BASE}-{plat}-{fnpack_arch}"
 
 
-def download_proxy(url, out_file, description, proxy=True):
-    """下载 url 到 out_file。
+def download_proxy(url, out_file, description, proxy=True, expected_sha256="",
+                   expected_size=0, kind="fpk", mirrors=None):
+    """下载 url 到 out_file（通过加速源，直连兜底）。
 
-    proxy=True （默认，GitHub 资源）：依次尝试 直连 -> MAIN_PROXY -> BINARY_PROXY
+    proxy=True （默认，GitHub 资源）：镜像按顺序轮转、直连最后
     proxy=False（非 GitHub 主机，如 static2.fnnas.com）：只直连，
                 因为 GitHub 加速源只代理 GitHub 域名，套上前缀必然失败。
+    下载后统一做 大小 / 魔数 / SHA-256 校验：加速链路上「下完」不等于「下对」。
     """
-    url_list = [url, MAIN_PROXY + url, BINARY_PROXY + url] if proxy else [url]
-    for i, u in enumerate(url_list):
+    if not proxy:
+        return _direct_download(url, out_file, description)
+    ok, err = gh_mirror.download_parallel(
+        url, out_file, mirrors=mirrors, description=description,
+        expected_sha256=expected_sha256, expected_size=expected_size,
+        user_agent="fnos-transmission-build", log=log, kind=kind,
+    )
+    if not ok:
+        log(f"  ERROR: Failed to download {description}: {err}", "red")
+    return ok
+
+
+def _direct_download(url, out_file, description):
+    """非 GitHub 主机（官方静态站）直连下载，不走加速源。"""
+    for attempt in (1, 2):
         try:
             if os.path.exists(out_file):
                 os.remove(out_file)
-            log(f"    Trying {u[:70]}...", "gray")
-            req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0"})
+            log(f"    Trying {url[:78]}...", "gray")
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=180) as resp:
                 data = resp.read()
-            if data and len(data) > 0:
+            if data:
                 with open(out_file, "wb") as f:
                     f.write(data)
                 log(f"  Downloaded {description}", "green")
@@ -127,6 +146,65 @@ def fetch_json(url):
     req = urllib.request.Request(url, headers={"User-Agent": "build.py"})
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+def default_probe_url(arch, version=None):
+    """构建期测速样本：本仓库最新 release 里同架构的 fpk。
+
+    用它而不是随便找个资源，是因为测的正是「应用内一键更新」将要下载的那个文件
+    所在的对象链路，测出来的可用性直接对应真实体验。取不到就返回空串（跳过测速）。
+    """
+    ver = (version or read_manifest_version() or "").strip()
+    if not ver:
+        return ""
+    name = f"transmission-{ver}-{arch}.fpk"
+    return f"{GITHUB_RELEASES_URL}/v{ver}/{name}"
+
+
+def write_mirror_manifest(out_path, arch, probe_url=""):
+    """实测加速源并写入 app/bin/update-mirrors.txt（供 seedark 运行时读取）。"""
+    if not probe_url:
+        try:
+            probe_url = default_probe_url(arch)
+        except Exception:
+            probe_url = ""
+    rows = []
+    if probe_url:
+        log("  实测加速源（用于生成 update-mirrors.txt）...", "gray")
+        for m, speed in sorted(
+                ((m, gh_mirror._probe_speed(m + probe_url, rounds=1, timeout=10))
+                 for m in gh_mirror.MIRRORS), key=lambda r: r[1], reverse=True):
+            log("    %-30s %s" % (m, ("%.2f MB/s" % (speed / 1048576)) if speed > 0 else "不可用"), "gray")
+            rows.append((m, speed))
+    usable = [m for m, speed in rows if speed > 0]
+    if not usable:
+        # 要么跳过测速，要么实测全挂：都写默认顺序（宁可给用户一个可能能用的兜底，
+        # 也不要打包一份空清单让应用内更新必然失败）
+        usable = list(gh_mirror.MIRRORS)
+        note = "未测速，使用默认顺序" if not probe_url else "构建期实测全部不可用，回退默认顺序"
+    else:
+        dropped = [m for m, speed in rows if speed <= 0]
+        note = "构建期实测排序（%s）" % ",".join(m.replace("https://", "").strip("/") for m, _ in rows if _ > 0)
+        if dropped:
+            note += "；本次剔除：%s" % ", ".join(m.replace("https://", "").strip("/") for m in dropped)
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(gh_mirror.render_manifest(usable, comment=note))
+    log(f"  update-mirrors.txt: {len(usable)} 个加速源（{note}）", "green")
+
+
+def _digest_hex(raw):
+    """GitHub 资产 digest（形如 "sha256:<hex>"）-> 小写 hex；不可用时返回空串。"""
+    raw = (raw or "").strip()
+    algo, _, hexsum = raw.partition(":")
+    hexsum = hexsum.strip().lower()
+    if algo.lower() != "sha256" or len(hexsum) != 64:
+        return ""
+    try:
+        bytes.fromhex(hexsum)
+    except ValueError:
+        return ""
+    return hexsum
 
 
 def read_manifest_version():
@@ -179,20 +257,31 @@ def download_seedark(arch, out_path):
         return False, "SeedArk release 缺少 tag_name"
     asset_name = f"seedark-{tag}-linux-{arch}.tar.gz"
     asset_url = None
+    asset_sha = ""
+    asset_size = 0
     for a in rel.get("assets", []):
         if a.get("name") == asset_name:
             asset_url = a.get("browser_download_url")
+            # GitHub 为每个资产算好了 sha256:<hex>；走第三方加速源时必须用它校验，
+            # 否则「下完」只说明拿到了若干字节，不说明拿到的是对的文件。
+            asset_sha = _digest_hex(a.get("digest", ""))
+            asset_size = int(a.get("size") or 0)
             break
     if not asset_url:
         names = [a.get("name") for a in rel.get("assets", [])]
         return False, f"SeedArk release {tag} 中未找到 {asset_name}（可用: {names}）"
 
-    tarball = os.path.join(BUILD_DIR, asset_name)
+    tarball = os.path.join(BUILD_DIR, f"seedark-{tag}-linux-{arch}")
+    valid_cache = False
     if os.path.exists(tarball) and os.path.getsize(tarball) > 0:
+        ok, _reason = gh_mirror.verify_payload(tarball, asset_sha, asset_size, kind="none")
+        valid_cache = ok
+    if valid_cache:
         log(f"  Using cached tarball: {asset_name}", "green")
     else:
         log(f"  Downloading SeedArk {tag} ({asset_name})...", "gray")
-        if not download_proxy(asset_url, tarball, asset_name):
+        if not download_proxy(asset_url, tarball, asset_name, expected_sha256=asset_sha,
+                              expected_size=asset_size, kind="none"):
             return False, f"下载 {asset_name} 失败"
 
     # 解压 tar.gz，取出 seedark 二进制
@@ -320,6 +409,11 @@ def main():
     parser.add_argument("--webui-binary", default="", help="直接使用指定路径的 linux seedark 二进制，跳过 SeedArk 下载")
     parser.add_argument("--seedark-release", action="store_true", help="跳过本地源码检测，强制从 SeedArk 最新 release 下载 WebUI")
     parser.add_argument("--list-versions", action="store_true", help="列出可用的 transmission 版本")
+    parser.add_argument("--mirror-probe-url", default="",
+                        help="构建期测速用的 GitHub 资源地址（默认取本仓库最新 release 的同架构 fpk）；"
+                             "留空 '' 表示跳过测速、直接写入默认加速源顺序")
+    parser.add_argument("--no-mirror-probe", action="store_true",
+                        help="跳过构建期测速，直接写入默认加速源顺序（CI 由 workflow 显式传入 --mirror-probe-url）")
     args = parser.parse_args()
 
     arch = args.arch
@@ -408,13 +502,13 @@ def main():
             os.remove(cache)
         url = f"{GITHUB_RELEASES_URL}/v{target_version}/{name}"
         log(f"  Trying {name}...", "gray")
-        if download_proxy(url, cache, name):
-            if is_elf(cache):
-                shutil.copy2(cache, daemon_target)
-                daemon_done = True
-                break
+        # kind="elf"：下载侧就直接校验 ELF 魔数，代理返回的错误页不会被当成成功
+        if download_proxy(url, cache, name, kind="elf"):
+            shutil.copy2(cache, daemon_target)
+            daemon_done = True
+            break
+        if os.path.exists(cache):
             os.remove(cache)
-            log(f"  Not a valid ELF binary: {name}", "red")
     if not daemon_done:
         log(f"  ERROR: Failed to download transmission-daemon for {arch} (release v{target_version})", "red")
         sys.exit(1)
@@ -458,6 +552,13 @@ def main():
             sys.exit(1)
     if os.name != "nt":
         os.chmod(manager_target, 0o755)
+
+    # 加速源清单：打进 app/bin/update-mirrors.txt，与 seedark 同级。
+    # 应用内一键更新由 seedark 自己下载 fpk，它启动时读这份清单；构建期实测排序，
+    # 打包当天哪几个源真的能用就只写哪几个（实测全挂时回退默认顺序）。
+    mirror_manifest = os.path.join(BUILD_DIR, "app", "bin", gh_mirror.MIRROR_MANIFEST_NAME)
+    probe_url = "" if args.no_mirror_probe else args.mirror_probe_url
+    write_mirror_manifest(mirror_manifest, arch, probe_url=probe_url)
 
     # 复制附加 UI 文件（桌面图标与 config）
     ui_target = os.path.join(BUILD_DIR, "app", "ui")

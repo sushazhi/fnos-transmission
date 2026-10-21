@@ -13,3 +13,5 @@ cmd/* text eol=lf
 # 在仓库层统一行尾，比在每个消费点各自 tr -d '\r' 更可靠。
 manifest text eol=lf
 README.md text eol=lf
+# 打包进 fpk 的加速源清单：seedark 按行解析，CRLF 会让行尾带上 \r 导致地址不可用
+app/bin/* eol=lf

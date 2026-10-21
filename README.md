@@ -102,6 +102,8 @@ python build.py --list-versions
   - **release 下载**（无本地源码时回退，或 `--seedark-release` 强制）：从 [SeedArk](https://github.com/sushazhi/SeedArk) 最新 release 下载对应架构的 `seedark` 单二进制（Go + React 内嵌前端），以原名放入 `app/bin/`，无需本地 Go/Node 工具链
   - **预编译二进制**（`--webui-binary <file>`）：直接指定已编译好的 linux `seedark`
 - **daemon 下载**：自动从 GitHub Releases 获取 musl 静态 `transmission-daemon`（候选资产 `transmission-daemon-musl-<版本>-<架构>` → `transmission-daemon-musl-<架构>` 多级回退），产物缓存在 `.local-build/` 供重复构建复用
+- **GitHub 加速下载**：所有 GitHub 资产走 [`tools/gh_mirror.py`](tools/gh_mirror.py) 的加速源（`gh-proxy.com` → `v4.gh-proxy.org` → `ghfast.top` → `ghproxy.imciel.com` → 直连兜底），采用 **2MB 分片 + 8 路并发** 下载：单连接被节点限流在 0.3~0.5 MB/s，并发后才拿得到真实带宽；某一片卡住只换那一片的源。下完统一校验大小 / 魔数 / SHA-256（GitHub 元数据里的 digest），错误页不会被当成成功
+- **加速源清单随包发布**：构建时用本次 fpk 地址实测各加速源，可用的写进 `app/bin/update-mirrors.txt`（供 SeedArk 应用内更新读取），实测全挂则回退默认顺序；`--no-mirror-probe` 可跳过测速
 - 构建产物输出到项目根目录：`transmission-<版本>-<架构>.fpk`
 
 ### CI 构建
@@ -109,7 +111,8 @@ python build.py --list-versions
 GitHub Actions（`.github/workflows/build-and-release.yml`）自动为 **arm64** / **amd64** 双架构构建并发布：
 
 - **musl 静态编译** transmission-daemon（Alpine 容器内全静态编译），产物上传至 `v<版本>` release；同名资产已存在时直接复用，手动触发时可勾选 `force_rebuild` 强制重编
-- **fpk 打包**：下载 SeedArk 最新 release → 组装应用结构 → `fnpack` 打包 → 上传 artifacts；打 `v*` tag 时自动发布 release（含 fpk）
+- **fpk 打包**：下载 SeedArk 最新 release → 组装应用结构 → 生成 `app/bin/update-mirrors.txt`（实测加速源）→ `fnpack` 打包 → 上传 artifacts；打 `v*` tag 时自动发布 release（含 fpk）
+- **下载也走加速**：复用 daemon 资产与 SeedArk 产物同样按加速源轮转，并用 `file` 校验确认为 ELF/tar.gz 才接受
 - 触发方式：推送 `v*` tag、手动触发（workflow_dispatch）
 - 产物位置：[Releases](https://github.com/sushazhi/fnos-transmission/releases)、CI 运行页面 artifacts
 
@@ -182,7 +185,8 @@ fnos-transmission/
 ├── app/                    # fnOS应用资源
 │   ├── bin/                # 构建产生的可执行文件
 │   │   ├── transmission-daemon  # Transmission守护进程（musl 全静态编译，无动态库依赖）
-│   │   └── seedark # WebUI 后端（SeedArk，原名 trpanel；Go+React 单二进制，内嵌前端，直连 fnOS 统一网关）
+│   │   ├── seedark # WebUI 后端（SeedArk，原名 trpanel；Go+React 单二进制，内嵌前端，直连 fnOS 统一网关）
+│   │   └── update-mirrors.txt   # 加速源清单（构建期生成；seedark 应用内一键更新按它下载 fpk）
 │   └── ui/                  # 桌面图标与应用入口配置（前端已内嵌于 seedark）
 │       ├── config          # 桌面应用配置
 │       └── images/         # 应用图标
@@ -207,7 +211,9 @@ fnos-transmission/
 │   ├── upgrade             # 升级向导
 │   └── uninstall           # 卸载向导
 ├── tools/
-│   └── check_upstream.py   # 月末检查上游版本并改写 manifest/README（供 CI 调用，可本地复现）
+│   ├── check_upstream.py   # 月末检查上游版本并改写 manifest/README（供 CI 调用，可本地复现）
+│   ├── gh_mirror.py        # GitHub 加速源与下载实现（单一事实源：地址表、分片并发下载、完整性校验）
+│   └── build_mirror_probe.py # 实测加速源并生成 app/bin/update-mirrors.txt（--self-test 可离线自检）
 ├── .github/workflows/
 │   ├── build-and-release.yml  # 双架构构建 + 发布（tag / 手动触发）
 │   └── check-upstream.yml     # 每月最后一天检查上游，有更新则改版本并派发构建
@@ -215,6 +221,16 @@ fnos-transmission/
 ├── LICENSE                 # 项目许可证
 └── manifest                # 应用元数据
 ```
+
+---
+
+## ⚡ 应用内一键更新
+
+WebUI 检测到新版本后可以直接在界面里下载 fpk 更新包，再按提示在「应用中心 → 手动安装」更新：
+
+- **为什么要分片并发**：GitHub release 资源在国内经常握手成功却拿不到数据；可用的第三方加速源单连接也被限流在 0.3~0.5 MB/s，**换源并不会更快**。真正的提速手段在于「多连接 + 多源分摊」——2MB 分片、最多 8 路并发，分片轮流分给清单里的加速源。
+- **一致性怎么保证**：各加速源背后是同一个对象（ETag 一致），分片按 `Content-Range` 偏移写回、ETag 与探测基线不符即丢弃换源；拼接后再整文件比对 GitHub 的 SHA-256 摘要。上游只给 MD5 时按 MD5 校验并记日志；经代理下载却**没有任何摘要**时直接拒绝，不拿完整性换速度。
+- **加速源清单**：`app/bin/update-mirrors.txt`，每行一个前缀（`#` 为注释，顺序即优先级），由构建期实测生成；文件缺失或读不到时 seedark 退回内置默认列表。改地址只需改 `tools/gh_mirror.py` 与 SeedArk 的 `UpdateMirrors` 两处（CI 会从 Go 源码里提取清单，双份地址表必须一致）。
 
 ---
 
