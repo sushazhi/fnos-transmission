@@ -1,6 +1,6 @@
 # Transmission for fnOS 🚀
 
-[![Transmission Version](https://img.shields.io/badge/Transmission-4.1.3-blue?style=flat-square)](https://github.com/transmission/transmission/releases)
+[![Transmission Version](https://img.shields.io/badge/Transmission-4.1.4-blue?style=flat-square)](https://github.com/transmission/transmission/releases)
 [![WebUI](https://img.shields.io/badge/WebUI-Go%2BReact-green?style=flat-square)](https://github.com/sushazhi/SeedArk)
 [![Platform](https://img.shields.io/badge/Platform-fnOS-green?style=flat-square)](https://www.fnnas.com/)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
@@ -250,7 +250,7 @@ WebUI 检测到新版本后可以直接在界面里下载 fpk 更新包，再按
 
 | 项目 | 版本 | 用途 | 许可证 |
 |------|------|------|--------|
-| [Transmission](https://github.com/transmission/transmission) | 4.1.3 | BitTorrent 客户端核心 | [GPL-2.0](https://www.gnu.org/licenses/gpl-2.0.html) |
+| [Transmission](https://github.com/transmission/transmission) | 4.1.4 | BitTorrent 客户端核心 | [GPL-2.0](https://www.gnu.org/licenses/gpl-2.0.html) |
 | [SeedArk](https://github.com/sushazhi/SeedArk) | latest | WebUI 管理面板（Go + React 单二进制，内嵌前端，原名 trpanel） | MIT |
 
 > 📌 **许可证说明**：本应用自身代码（生命周期脚本、构建工具、配置）以 [MIT](LICENSE) 许可证发布；包内聚合分发了 **Transmission（GPL-2.0）** 的 `transmission-daemon` 二进制与 **SeedArk（MIT，原名 trpanel）** 的 WebUI。Transmission 对应源代码与构建脚本的获取方式见 [LICENSE](LICENSE) 中的「Source code offer」。
