@@ -72,6 +72,9 @@ python build.py --seedark-src ../SeedArk
 # 本地源码构建，但跳过前端 pnpm 构建（复用 frontend/dist 已有产物）
 python build.py --skip-frontend
 
+# pnpm 不在 PATH 时显式指定（可执行文件，或 pnpm.mjs / pnpm.cjs 路径）
+python build.py --pnpm /path/to/pnpm          # 等价于环境变量 SEEDARK_PNPM
+
 # 强制从 SeedArk 最新 release 下载 WebUI（跳过本地源码）
 python build.py --seedark-release
 
@@ -91,6 +94,7 @@ python build.py --list-versions
 | `--arch, -a` | 目标架构 `arm64` / `amd64` | `arm64` |
 | `--seedark-src` | 指定本地 SeedArk 源码目录构建 WebUI（需 Go + pnpm 11+），优先级最高 | 自动检测 `../SeedArk` |
 | `--skip-frontend` | 配合本地源码构建：跳过前端 pnpm 构建，复用已有 `frontend/dist` 或 `backend/web/dist` | — |
+| `--pnpm` | 指定 pnpm（可执行文件，或 `pnpm.mjs`/`pnpm.cjs` 路径）；等价于环境变量 `SEEDARK_PNPM` | 先找 PATH，再找 node + 常见位置的 pnpm CLI |
 | `--webui-binary` | 直接使用指定路径的 linux `seedark` 二进制，跳过 SeedArk 下载 | — |
 | `--seedark-release` | 强制从 SeedArk 最新 release 下载 WebUI，跳过本地源码检测 | — |
 | `--list-versions` | 列出可用的 transmission 版本 | — |
@@ -103,15 +107,26 @@ python build.py --list-versions
   - **预编译二进制**（`--webui-binary <file>`）：直接指定已编译好的 linux `seedark`
 - **daemon 下载**：自动从 GitHub Releases 获取 musl 静态 `transmission-daemon`（候选资产 `transmission-daemon-musl-<版本>-<架构>` → `transmission-daemon-musl-<架构>` 多级回退），产物缓存在 `.local-build/` 供重复构建复用
 - **GitHub 下载：先直连，超时才加速**：所有 GitHub 资产走 [`tools/gh_mirror.py`](tools/gh_mirror.py)，**优先直连**（不经第三方中转，境外/无墙链路通常最快）；直连 4s 内探测不通、返回错误页或明显龟速时，才按加速源顺序（`gh-proxy.com` → `v4.gh-proxy.org` → `ghfast.top` → `ghproxy.imciel.com`）接手；分片下载中直连卡住则那一片改派加速源并把直连整体降级。采用 **2MB 分片 + 8 路并发** 下载（单连接被节点限流在 0.3~0.5 MB/s，并发后才拿得到真实带宽）。下完统一校验大小 / 魔数 / SHA-256（GitHub 元数据里的 digest），错误页不会被当成成功
-- **加速源清单随包发布**：构建时用本次 fpk 地址实测各加速源，可用的写进 `app/bin/update-mirrors.txt`（供 SeedArk 应用内更新读取），实测全挂则回退默认顺序；`--no-mirror-probe` 可跳过测速
+- **加速源地址表分两处、各管一段**：**构建期下载**（daemon / SeedArk / fpk 资产）用 [`tools/gh_mirror.py`](tools/gh_mirror.py) 的 `MIRRORS`；**应用内一键更新**由面板自己维护（SeedArk `update.go` 的 `UpdateMirrors` 内置常量，按运行时健康度动态排序）。因此本仓库不再往 fpk 里打包「加速源清单」文件；改地址时两处都要改
 - 构建产物输出到项目根目录：`transmission-<版本>-<架构>.fpk`
+
+### 本地构建常见坑（已内置自动处理）
+
+| 现象 | 原因 | build.py 的处理 |
+|------|------|----------------|
+| `未找到 pnpm` | pnpm 不在 PATH（例如只有工具自带的 Node 运行时） | 自动探测 PATH → 全局 npm → corepack → `~/.dsh/dsh-runtimes/*/dependencies/{node,pnpm}`；也可 `--pnpm` / `SEEDARK_PNPM` 显式指定 |
+| `'node' 不是内部或外部命令`（pnpm build 阶段失败） | 走「node + `pnpm.mjs`」方式时 node 不在 PATH，而 `pnpm build` 会再起一层 shell 执行 `vite build` | 自动把 node 所在目录补进子进程 PATH |
+| fnpack 报 `Create tmp dir ...: Access is denied` / 打包中途 `open ...: Access is denied` | 进程默认临时目录受限，或缓存下来的 fnpack 二进制副本有问题 | 依次重试：默认临时目录 → 构建目录**之外**的独立临时目录（`.fnpack-scratch/`）→ fnpack 逐字节新副本；日志会打印第几次尝试成功 |
+| 日志里出现乱码或 `UnicodeEncodeError` | Windows 控制台 GBK 编码 | stdout 以 `errors="replace"` 打开，不再因编码中断构建 |
+
+> ⚠️ 手动调用 fnpack 时注意：fnpack 会把打包目录整体拷进临时目录，所以临时目录（`TEMP`/`TMP`）**绝不能落在打包目录 `.local-build/` 内**，否则会自我递归复制把磁盘塞满。
 
 ### CI 构建
 
 GitHub Actions（`.github/workflows/build-and-release.yml`）自动为 **arm64** / **amd64** 双架构构建并发布：
 
 - **musl 静态编译** transmission-daemon（Alpine 容器内全静态编译），产物上传至 `v<版本>` release；同名资产已存在时直接复用，手动触发时可勾选 `force_rebuild` 强制重编
-- **fpk 打包**：下载 SeedArk 最新 release → 组装应用结构 → 生成 `app/bin/update-mirrors.txt`（实测加速源）→ `fnpack` 打包 → 上传 artifacts；打 `v*` tag 时自动发布 release（含 fpk）
+- **fpk 打包**：下载 SeedArk 最新 release → 组装应用结构 → `fnpack` 打包 → 上传 artifacts；打 `v*` tag 时自动发布 release（含 fpk）
 - **下载也走加速**：复用 daemon 资产与 SeedArk 产物同样按加速源轮转，并用 `file` 校验确认为 ELF/tar.gz 才接受
 - 触发方式：推送 `v*` tag、手动触发（workflow_dispatch）
 - 产物位置：[Releases](https://github.com/sushazhi/fnos-transmission/releases)、CI 运行页面 artifacts
@@ -185,8 +200,7 @@ fnos-transmission/
 ├── app/                    # fnOS应用资源
 │   ├── bin/                # 构建产生的可执行文件
 │   │   ├── transmission-daemon  # Transmission守护进程（musl 全静态编译，无动态库依赖）
-│   │   ├── seedark # WebUI 后端（SeedArk，原名 trpanel；Go+React 单二进制，内嵌前端，直连 fnOS 统一网关）
-│   │   └── update-mirrors.txt   # 加速源清单（构建期生成；seedark 应用内一键更新按它下载 fpk）
+│   │   └── seedark # WebUI 后端（SeedArk，原名 trpanel；Go+React 单二进制，内嵌前端，直连 fnOS 统一网关）
 │   └── ui/                  # 桌面图标与应用入口配置（前端已内嵌于 seedark）
 │       ├── config          # 桌面应用配置
 │       └── images/         # 应用图标
@@ -212,8 +226,7 @@ fnos-transmission/
 │   └── uninstall           # 卸载向导
 ├── tools/
 │   ├── check_upstream.py   # 月末检查上游版本并改写 manifest/README（供 CI 调用，可本地复现）
-│   ├── gh_mirror.py        # GitHub 加速源与下载实现（单一事实源：地址表、分片并发下载、完整性校验）
-│   └── build_mirror_probe.py # 实测加速源并生成 app/bin/update-mirrors.txt（--self-test 可离线自检）
+│   └── gh_mirror.py        # 构建期 GitHub 下载实现（加速源地址表、分片并发下载、完整性校验）
 ├── .github/workflows/
 │   ├── build-and-release.yml  # 双架构构建 + 发布（tag / 手动触发）
 │   └── check-upstream.yml     # 每月最后一天检查上游，有更新则改版本并派发构建
@@ -231,7 +244,7 @@ WebUI 检测到新版本后可以直接在界面里下载 fpk 更新包，再按
 - **为什么先直连**：直连不经过第三方中转，既省一跳又免掉「代理节点限流」；代价是墙内直连要等一次超时，所以直连探测超时压到 4s、分片阶段直连无数据 8s 即改派，两次超时就整次降级到加速源，把代价限制在秒级。
 - **为什么要分片并发**：GitHub release 资源在国内经常握手成功却拿不到数据；可用的第三方加速源单连接也被限流在 0.3~0.5 MB/s，**换源并不会更快**。真正的提速手段在于「多连接 + 多源分摊」——2MB 分片、最多 8 路并发，分片轮流分给清单里的加速源。
 - **一致性怎么保证**：各加速源背后是同一个对象（ETag 一致），分片按 `Content-Range` 偏移写回、ETag 与探测基线不符即丢弃换源；拼接后再整文件比对 GitHub 的 SHA-256 摘要。上游只给 MD5 时按 MD5 校验并记日志；经代理下载却**没有任何摘要**时直接拒绝，不拿完整性换速度。
-- **加速源清单**：`app/bin/update-mirrors.txt`，每行一个前缀（`#` 为注释，顺序即优先级），由构建期实测生成；文件缺失或读不到时 seedark 退回内置默认列表。改地址只需改 `tools/gh_mirror.py` 与 SeedArk 的 `UpdateMirrors` 两处（CI 会从 Go 源码里提取清单，双份地址表必须一致）。
+- **加速源地址表为什么要分两处**：构建期在 CI（GitHub 托管机房的网络）跑，应用内在用户 NAS 上跑，两者面对的网络完全不同——构建期实测出来的「哪个源快」推不到用户家里，所以应用内不读任何清单文件，只按运行时的分片健康度（连续失败降级 + EWMA 速度中位数 + 墙钟改派）动态排序。改地址时改两处：构建期 `tools/gh_mirror.py` 的 `MIRRORS`、应用内 SeedArk `update.go` 的 `UpdateMirrors`。
 
 ---
 

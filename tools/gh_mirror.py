@@ -1,16 +1,11 @@
 #!/usr/bin/env python3
 """gh_mirror - GitHub 下载加速源（单一事实源）
 
-这个模块被三处共用：
-  1) build.py            本地/CI 构建时下载 transmission-daemon、SeedArk、fpk 资产
-  2) build_mirror_probe.py  打包前实测各加速源，选出可用子集写进 fpk
-  3) （打包后的 SeedArk）  读取 app/bin/update-mirrors.txt，用于应用内一键更新
-
-为什么要有这个文件
-------------------
-之前加速源地址散落在 build.py / gateway-proxy.py / SeedArk update.go / CI workflow
-四处，改一次要同步改四个地方，漏改就会让「构建能下、应用内更新不能下」。现在
-地址与顺序只在这里定义，其它地方要么 import，要么读取由这里生成的清单文件。
+这个模块服务「构建期下载」：
+  build.py 与 CI workflow 下载 transmission-daemon、SeedArk、fpk 资产时用它。
+应用内一键更新的加速源**不在这里**：面板（SeedArk）自带地址表（update.go 的
+UpdateMirrors），它按运行时健康度动态排序，不读任何外部清单文件——所以本仓库
+不再往 fpk 里打包 update-mirrors.txt。两处地址表各自维护，改地址时两边都要改。
 
 选源依据（2026-10-21 实测，16MB fpk，单连接）
 --------------------------------------------
@@ -60,9 +55,6 @@ MIRRORS = (
     "https://ghproxy.imciel.com/",
 )
 
-# 打包进 fpk 的清单文件名（放在 app/bin/ 下，与 seedark 同级）。
-# SeedArk 启动时优先读它；文件不存在或为空则退回其内置默认列表。
-MIRROR_MANIFEST_NAME = "update-mirrors.txt"
 
 # 旧代理，仅用于「把旧清单升级成新清单」时识别并剔除
 _OBSOLETE_MIRRORS = ("https://gh.dpik.top/",)
@@ -112,17 +104,6 @@ def is_obsolete(mirror):
     return normalize_mirror(mirror) in _OBSOLETE_MIRRORS
 
 
-def render_manifest(mirrors, comment=None):
-    """生成清单文件文本（带说明头，便于人在 NAS 上直接看）。"""
-    lines = [
-        "# fnOS 应用更新加速源（自动生成，勿手改；改建 tools/gh_mirror.py 的 MIRRORS）",
-        "# 每行一个前缀：镜像地址 + 原始 GitHub 资源地址即为可下载地址",
-    ]
-    if comment:
-        for c in str(comment).splitlines():
-            lines.append("# " + c)
-    lines.extend(normalize_mirror(m) for m in mirrors if normalize_mirror(m))
-    return "\n".join(lines) + "\n"
 
 
 def load_manifest(path):

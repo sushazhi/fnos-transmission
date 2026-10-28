@@ -241,38 +241,6 @@ jobs:
           chmod +x app/bin/seedark
           echo "SeedArk ${TAG} extracted to seedark"
 
-      # 加速源清单：由 tools/gh_mirror.py 生成（与 build.py、SeedArk 共用同一份地址表）。
-      # 实测各加速源（用本次 release 的 fpk 作样本），把当天可用的写进清单；seedark 启动时读它。
-      # 实测全挂或测速失败时写默认顺序 —— 绝不打包空清单。
-      - name: Generate update-mirrors.txt
-        env:
-          # 用 env 传参而不是把 ${{ matrix.arch }} 拼进 Python 源码字符串：
-          # 表达式在 YAML 层展开，拼进 heredoc 里既脆又容易被误改
-          MATRIX_ARCH: ${{ matrix.arch }}
-        run: |
-          set -e
-          python3 - <<'PY'
-          import os, pathlib, sys
-          sys.path.insert(0, "tools")
-          import gh_mirror
-          version = pathlib.Path("manifest").read_text(encoding="utf-8")
-          ver = [l.split("=", 1)[1].strip() for l in version.splitlines() if l.startswith("version")]
-          sample = ""
-          if ver:
-              sample = "https://github.com/%s/releases/download/v%s/transmission-%s-%s.fpk" % (
-                  "sushazhi/fnos-transmission", ver[0], ver[0], os.environ.get("MATRIX_ARCH", "arm64"))
-          rows = [(m, gh_mirror._probe_speed(m + sample, rounds=1, timeout=10) if sample else 0.0)
-                  for m in gh_mirror.MIRRORS]
-          for m, sp in sorted(rows, key=lambda r: r[1], reverse=True):
-              print("  %-30s %s" % (m, ("%.2f MB/s" % (sp / 1048576)) if sp > 0 else "unusable"))
-          usable = [m for m, sp in rows if sp > 0] or list(gh_mirror.MIRRORS)
-          note = "CI 实测排序" if any(sp > 0 for _, sp in rows) else "CI 未测到可用源，回退默认顺序"
-          pathlib.Path("app/bin").mkdir(parents=True, exist_ok=True)
-          pathlib.Path("app/bin/update-mirrors.txt").write_text(
-              gh_mirror.render_manifest(usable, comment=note), encoding="utf-8")
-          print("update-mirrors.txt:", usable)
-          PY
-          test -s app/bin/update-mirrors.txt
 
       - name: Verify binaries
         run: |

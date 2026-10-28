@@ -6,6 +6,7 @@ build.py - Transmission for fnOS 统一打包脚本（跨平台，替代 build.p
     python build.py [--app-version 4.1.3.2.1] [--transmission-version 4.1.3] [--arch arm64|amd64]
     python build.py --seedark-src ../SeedArk             # 从本地 SeedArk 源码构建 WebUI
     python build.py --seedark-src ../SeedArk --skip-frontend   # 复用已构建的前端产物
+    python build.py --pnpm /path/to/pnpm.mjs             # pnpm 不在 PATH 时显式指定
     python build.py --list-versions
 
 特性:
@@ -41,10 +42,16 @@ SEEDARK_RELEASES_URL = "https://api.github.com/repos/sushazhi/SeedArk/releases/l
 sys.path.insert(0, os.path.join(PROJECT_DIR, "tools"))
 import gh_mirror  # noqa: E402
 
-UPDATE_MIRRORS = list(gh_mirror.MIRRORS)
 
 
 _ANSI_COLORS = {"cyan": "96", "green": "92", "yellow": "93", "red": "91", "gray": "90"}
+
+# 日志里会带子进程输出的尾部（可能含 UTF-8 替换字符），Windows 控制台默认 GBK
+# 编码时 sys.stdout.write 会直接抛 UnicodeEncodeError 把构建打断，这里放宽为替换输出
+try:
+    sys.stdout.reconfigure(errors="replace")
+except Exception:
+    pass
 
 def log(msg, color="cyan"):
     # TTY 下输出 ANSI 颜色，重定向/管道下输出纯文本
@@ -148,50 +155,6 @@ def fetch_json(url):
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
-
-def default_probe_url(arch, version=None):
-    """构建期测速样本：本仓库最新 release 里同架构的 fpk。
-
-    用它而不是随便找个资源，是因为测的正是「应用内一键更新」将要下载的那个文件
-    所在的对象链路，测出来的可用性直接对应真实体验。取不到就返回空串（跳过测速）。
-    """
-    ver = (version or read_manifest_version() or "").strip()
-    if not ver:
-        return ""
-    name = f"transmission-{ver}-{arch}.fpk"
-    return f"{GITHUB_RELEASES_URL}/v{ver}/{name}"
-
-
-def write_mirror_manifest(out_path, arch, probe_url=""):
-    """实测加速源并写入 app/bin/update-mirrors.txt（供 seedark 运行时读取）。"""
-    if not probe_url:
-        try:
-            probe_url = default_probe_url(arch)
-        except Exception:
-            probe_url = ""
-    rows = []
-    if probe_url:
-        log("  实测加速源（用于生成 update-mirrors.txt）...", "gray")
-        for m, speed in sorted(
-                ((m, gh_mirror._probe_speed(m + probe_url, rounds=1, timeout=10))
-                 for m in gh_mirror.MIRRORS), key=lambda r: r[1], reverse=True):
-            log("    %-30s %s" % (m, ("%.2f MB/s" % (speed / 1048576)) if speed > 0 else "不可用"), "gray")
-            rows.append((m, speed))
-    usable = [m for m, speed in rows if speed > 0]
-    if not usable:
-        # 要么跳过测速，要么实测全挂：都写默认顺序（宁可给用户一个可能能用的兜底，
-        # 也不要打包一份空清单让应用内更新必然失败）
-        usable = list(gh_mirror.MIRRORS)
-        note = "未测速，使用默认顺序" if not probe_url else "构建期实测全部不可用，回退默认顺序"
-    else:
-        dropped = [m for m, speed in rows if speed <= 0]
-        note = "构建期实测排序（%s）" % ",".join(m.replace("https://", "").strip("/") for m, _ in rows if _ > 0)
-        if dropped:
-            note += "；本次剔除：%s" % ", ".join(m.replace("https://", "").strip("/") for m in dropped)
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    with open(out_path, "w", encoding="utf-8", newline="\n") as f:
-        f.write(gh_mirror.render_manifest(usable, comment=note))
-    log(f"  update-mirrors.txt: {len(usable)} 个加速源（{note}）", "green")
 
 
 def _digest_hex(raw):
@@ -329,7 +292,123 @@ def _tail(proc, n=500):
     return out.decode("utf-8", "replace")[-n:]
 
 
-def build_seedark_from_src(src_dir, arch, out_path, skip_frontend=False):
+def find_pnpm(explicit=""):
+    """定位 pnpm，返回可直接追加子命令的命令前缀（list）；找不到返回 None。
+
+    开发机上 pnpm 常常不在 PATH 里（例如只有工具自带的 Node 运行时，node 也不在 PATH），
+    这样 `shutil.which("pnpm")` 找不到、前端就从源码构建不了。按优先级找一个能用的：
+      0) --pnpm / SEEDARK_PNPM 显式指定的 pnpm（可执行文件，或 pnpm.mjs / pnpm.cjs）
+      1) PATH 上的 pnpm / pnpm.cmd / pnpm.exe
+      2) node + 常见位置的 pnpm CLI（全局 npm 目录、corepack、工具自带运行时
+         ~/.dsh/dsh-runtimes/*/dependencies/{node,pnpm}，该运行时自带自己的 node）
+    """
+    def usable(node_bin, cli):
+        return bool(node_bin) and os.path.isfile(node_bin) and os.path.isfile(cli)
+
+    explicit = (explicit or os.environ.get("SEEDARK_PNPM", "")).strip()
+    node = shutil.which("node")
+    if explicit:
+        if not os.path.isfile(explicit):
+            log(f"  WARN: 指定的 pnpm 不存在: {explicit}", "yellow")
+            return None
+        if explicit.lower().endswith((".js", ".cjs", ".mjs")):
+            # pnpm 11 的 CLI 入口是 ESM（pnpm.mjs），必须经 node 执行
+            return [node, explicit] if node else None
+        return [explicit]
+
+    for name in ("pnpm", "pnpm.cmd", "pnpm.exe", "pnpm.bat"):
+        found = shutil.which(name)
+        if found:
+            return [found]
+
+    appdata, progfiles = os.environ.get("APPDATA", ""), os.environ.get("ProgramFiles", "")
+    pairs = []
+    if appdata:
+        pairs.append((node, os.path.join(appdata, "npm", "node_modules", "pnpm", "bin", "pnpm.cjs")))
+    if progfiles:
+        # corepack shim：node <corepack>/dist/pnpm.js
+        pairs.append((node, os.path.join(progfiles, "nodejs", "node_modules", "corepack", "dist", "pnpm.js")))
+    # 工具自带运行时（如 DSH：~/.dsh/dsh-runtimes/<runtime>/dependencies/{node,pnpm}）
+    runtimes = os.path.join(os.path.expanduser("~"), ".dsh", "dsh-runtimes")
+    if os.path.isdir(runtimes):
+        for rt in sorted(os.listdir(runtimes)):
+            deps = os.path.join(runtimes, rt, "dependencies")
+            rt_node = next((p for p in (os.path.join(deps, "node", "bin", "node.exe"),
+                                        os.path.join(deps, "node", "bin", "node"),
+                                        os.path.join(deps, "node", "node.exe")) if os.path.isfile(p)), "")
+            for cli in (os.path.join(deps, "pnpm", "bin", "pnpm.mjs"),
+                        os.path.join(deps, "pnpm", "bin", "pnpm.cjs")):
+                pairs.append((rt_node, cli))
+    for node_bin, cli in pairs:
+        if usable(node_bin, cli):
+            return [node_bin, cli]
+    return None
+
+
+def _byte_copy(src, dst):
+    """逐字节复制文件（不复制元数据）：fnpack 缓存副本出错时，重新落一份原始副本最可靠。"""
+    with open(src, "rb") as f, open(dst, "wb") as out:
+        shutil.copyfileobj(f, out, 1024 * 1024)
+
+
+def run_fnpack(fnpack_path, build_dir, log=log):
+    """跑 fnpack 打包，并在临时目录 / 二进制副本出问题时自动换招重试。
+
+    实测两类环境问题（都在 Windows 上复现过，报错都是 "Access is denied"）：
+      1) `Create tmp dir <tmp>/fnpack.xxx: Access is denied` —— 进程默认临时目录不可用；
+      2) `Copy pack ...: ... open <tmp>/.../ICON.PNG: Access is denied` —— 下了缓存很久的
+         fnpack 二进制本身在某些宿主进程下写/读临时目录受限。
+    对策依次为：① 原样跑一次；② 换到「打包目录之外」的独立临时目录；③ 再把 fnpack
+    逐字节复制成新副本后重跑。②的临时目录必须在打包目录之外：fnpack 会把打包目录整体
+    拷进临时目录，临时目录若落在打包目录内就会无限递归复制（实测能把磁盘塞满同名副本）。
+
+    返回 (ok, error_text)；成功时 build_dir/transmission.fpk 已生成。
+    """
+    abs_build = os.path.abspath(build_dir)
+    # 临时目录必须落在打包目录之外，否则 fnpack 会把临时目录自己拷进临时目录（无限递归）
+    scratch = os.path.join(os.path.dirname(abs_build), ".fnpack-scratch")
+
+    attempts = [
+        ("默认临时目录", dict(os.environ), fnpack_path),
+        ("独立临时目录", dict(os.environ), fnpack_path),
+        ("fnpack 新副本", dict(os.environ), ""),
+    ]
+
+    err = ""
+    for i, (label, env, exe) in enumerate(attempts, 1):
+        if i == 2:
+            os.makedirs(scratch, exist_ok=True)
+            env["TEMP"] = env["TMP"] = env["TMPDIR"] = scratch
+        if i == 3:
+            os.makedirs(scratch, exist_ok=True)
+            env["TEMP"] = env["TMP"] = env["TMPDIR"] = scratch
+            exe = os.path.join(scratch, "fnpack-retry.exe" if os.name == "nt" else "fnpack-retry")
+            _byte_copy(fnpack_path, exe)
+            if os.name != "nt":
+                os.chmod(exe, 0o755)
+
+        fpk_out = os.path.join(abs_build, "transmission.fpk")
+        if os.path.exists(fpk_out):
+            os.remove(fpk_out)
+        log(f"  Running fnpack build... [{i}/3 {label}]", "gray")
+        old_cwd = os.getcwd()
+        os.chdir(abs_build)
+        try:
+            proc = subprocess.run([exe, "build", "."], capture_output=True, env=env)
+        finally:
+            os.chdir(old_cwd)
+
+        if os.path.exists(fpk_out) and os.path.getsize(fpk_out) > 0:
+            if i > 1:
+                log(f"  fnpack 成功（第 {i} 次尝试：{label}）", "green")
+            return True, ""
+
+        err = _tail(proc, n=800)
+        log(f"    失败: {err.strip().splitlines()[-1][:200] if err.strip() else '无输出'}", "yellow")
+    return False, err
+
+
+def build_seedark_from_src(src_dir, arch, out_path, skip_frontend=False, pnpm_cmd=None):
     """从本地 SeedArk 源码目录构建 linux seedark 二进制。
 
     流程与 SeedArk 官方 Dockerfile 一致：
@@ -359,20 +438,27 @@ def build_seedark_from_src(src_dir, arch, out_path, skip_frontend=False):
         else:
             return False, "--skip-frontend 但未找到前端产物（frontend/dist 与 backend/web/dist 均为空或不存在）"
     else:
-        pnpm_bin = shutil.which("pnpm")
-        if not pnpm_bin:
-            return False, "未找到 pnpm（SeedArk 前端需 pnpm 11+；也可用 --skip-frontend 复用已有产物）"
+        pnpm_cmd = pnpm_cmd or find_pnpm()
+        if not pnpm_cmd:
+            return False, ("未找到 pnpm（SeedArk 前端需 pnpm 11+）。可用 --pnpm <路径> 或环境变量 "
+                           "SEEDARK_PNPM 指定，也可用 --skip-frontend 复用已有前端产物")
+        log(f"  Using pnpm: {' '.join(pnpm_cmd)}", "gray")
         env = dict(os.environ)
         env.setdefault("CI", "true")
+        # pnpm 执行 package.json 脚本时会再起一层 shell（如 vite build），那层 shell 从 PATH 找 node；
+        # 走「node + pnpm.mjs」自探测路径时 node 不在 PATH 上，必须把它的目录补进 PATH，
+        # 否则脚本直接报 "'node' 不是内部或外部命令 / not found"（实测），前端就构建不出来。
+        if os.path.basename(pnpm_cmd[0]).lower().startswith("node"):
+            env["PATH"] = os.path.dirname(pnpm_cmd[0]) + os.pathsep + env.get("PATH", "")
         log("  Installing frontend deps (pnpm install --frozen-lockfile)...", "gray")
-        proc = _run_cmd([pnpm_bin, "install", "--frozen-lockfile"], cwd=frontend_dir, env=env)
+        proc = _run_cmd(pnpm_cmd + ["install", "--frozen-lockfile"], cwd=frontend_dir, env=env)
         if proc.returncode != 0:
             log("  --frozen-lockfile 失败，回退 pnpm install...", "gray")
-            proc = _run_cmd([pnpm_bin, "install"], cwd=frontend_dir, env=env)
+            proc = _run_cmd(pnpm_cmd + ["install"], cwd=frontend_dir, env=env)
             if proc.returncode != 0:
                 return False, "pnpm install 失败: " + _tail(proc)
         log("  Building frontend (pnpm build)...", "gray")
-        proc = _run_cmd([pnpm_bin, "build"], cwd=frontend_dir, env=env)
+        proc = _run_cmd(pnpm_cmd + ["build"], cwd=frontend_dir, env=env)
         if proc.returncode != 0:
             return False, "pnpm build 失败: " + _tail(proc)
         src_dist = os.path.join(frontend_dir, "dist")
@@ -407,14 +493,10 @@ def main():
     parser.add_argument("--arch", "-a", default="arm64", choices=["arm64", "amd64"], help="目标架构")
     parser.add_argument("--seedark-src", default="", help="从本地 SeedArk 源码目录构建 WebUI（需 Go + pnpm 11+），优先级高于 --webui-binary 与 release 下载")
     parser.add_argument("--skip-frontend", action="store_true", help="配合本地源码构建：跳过前端 pnpm 构建，复用已有 frontend/dist 或 backend/web/dist")
+    parser.add_argument("--pnpm", default="", help="指定 pnpm（可执行文件，或 pnpm.mjs/pnpm.cjs 路径；等价于环境变量 SEEDARK_PNPM）。不指定则先在 PATH 找，再找 node + 常见位置的 pnpm CLI")
     parser.add_argument("--webui-binary", default="", help="直接使用指定路径的 linux seedark 二进制，跳过 SeedArk 下载")
     parser.add_argument("--seedark-release", action="store_true", help="跳过本地源码检测，强制从 SeedArk 最新 release 下载 WebUI")
     parser.add_argument("--list-versions", action="store_true", help="列出可用的 transmission 版本")
-    parser.add_argument("--mirror-probe-url", default="",
-                        help="构建期测速用的 GitHub 资源地址（默认取本仓库最新 release 的同架构 fpk）；"
-                             "留空 '' 表示跳过测速、直接写入默认加速源顺序")
-    parser.add_argument("--no-mirror-probe", action="store_true",
-                        help="跳过构建期测速，直接写入默认加速源顺序（CI 由 workflow 显式传入 --mirror-probe-url）")
     args = parser.parse_args()
 
     arch = args.arch
@@ -533,7 +615,8 @@ def main():
 
     if src_dir:
         # 从本地源码构建（Go 交叉编译 + 可选 pnpm 前端构建）
-        ok, err = build_seedark_from_src(src_dir, arch, manager_target, args.skip_frontend)
+        ok, err = build_seedark_from_src(src_dir, arch, manager_target, args.skip_frontend,
+                                        pnpm_cmd=find_pnpm(args.pnpm))
         if not ok:
             log(f"  ERROR: 从本地源码构建 SeedArk 失败: {err}", "red")
             sys.exit(1)
@@ -554,12 +637,6 @@ def main():
     if os.name != "nt":
         os.chmod(manager_target, 0o755)
 
-    # 加速源清单：打进 app/bin/update-mirrors.txt，与 seedark 同级。
-    # 应用内一键更新由 seedark 自己下载 fpk，它启动时读这份清单；构建期实测排序，
-    # 打包当天哪几个源真的能用就只写哪几个（实测全挂时回退默认顺序）。
-    mirror_manifest = os.path.join(BUILD_DIR, "app", "bin", gh_mirror.MIRROR_MANIFEST_NAME)
-    probe_url = "" if args.no_mirror_probe else args.mirror_probe_url
-    write_mirror_manifest(mirror_manifest, arch, probe_url=probe_url)
 
     # 复制附加 UI 文件（桌面图标与 config）
     ui_target = os.path.join(BUILD_DIR, "app", "ui")
@@ -584,26 +661,12 @@ def main():
         os.chmod(fnpack_path, 0o755)
 
     fpk_out = os.path.join(BUILD_DIR, "transmission.fpk")
-    if os.path.exists(fpk_out):
-        os.remove(fpk_out)
 
-    log("  Running fnpack build...", "gray")
-    old_cwd = os.getcwd()
-    os.chdir(BUILD_DIR)
-    try:
-        if get_platform() == "windows":
-            proc = subprocess.run([fnpack_path, "build", "."], capture_output=True)
-        else:
-            proc = subprocess.run(["./" + fnpack_name, "build", "."], capture_output=True)
-    finally:
-        os.chdir(old_cwd)
-
-    if not os.path.exists(fpk_out):
+    ok, err = run_fnpack(fnpack_path, BUILD_DIR)
+    if not ok:
         log("  ERROR: Build failed", "red")
-        if proc.stderr:
-            log("  " + proc.stderr.decode("utf-8", "replace")[:2000], "red")
-        if proc.stdout:
-            log("  " + proc.stdout.decode("utf-8", "replace")[:2000], "red")
+        if err:
+            log("  " + err[:2000], "red")
         sys.exit(1)
 
     final_name = f"transmission-{app_version}-{arch}.fpk"
