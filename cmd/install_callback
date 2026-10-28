@@ -131,6 +131,7 @@ else
     "peer-limit-global": 200,
     "peer-port": 51413,
     "peer-port-random-on-start": true,
+    "bind-address-ipv6": "::",
     "rpc-enabled": true,
     "rpc-authentication-required": false,
     "rpc-bind-address": "127.0.0.1",
@@ -153,6 +154,10 @@ chown -R package:package "$DATA_DIR" 2>/dev/null || true
 
 # 同步网关免密凭证（重装/覆盖安装后 settings.json 密码可能已是 hash，需确保 .rpc_secret 有对应明文）
 "${TRIM_APPDEST}/cmd/main" write_secret 2>/dev/null || true
+
+# IPv6 绑定归一化：覆盖安装（沿用旧配置）时把缺失/空的 bind-address-ipv6 归一化为 ::，
+# 避免 daemon 绑到启动时探测到的具体 IPv6 地址、地址变更后不重绑（transmission#873）
+"${TRIM_APPDEST}/cmd/main" fix_ipv6_bind 2>/dev/null || true
 
 echo ""
 echo "=================================="

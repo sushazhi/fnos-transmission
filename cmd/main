@@ -138,6 +138,55 @@ else:
 PYEOF
 }
 
+normalize_ipv6_bind() {
+    # 修复「IPv6 地址变更后 daemon 仍绑旧地址，必须重启应用才生效」：
+    # Transmission 4.x 的 bind-address-ipv6 默认为空串，此时它不绑通配 ::，而是绑「启动时
+    # 探测到的全局单播 IPv6 具体地址」（session.cc: bind_address() → ip_cache source address）。
+    # 而 peer TCP/UDP socket 只在启动或 bind 设置变化时创建，IPv6 前缀变更 / 临时地址轮换后
+    # 上游没有任何重绑逻辑（transmission#873），于是 socket 一直绑在已失效的旧地址上：入站连接
+    # 收不到、出站 IPv6 因绑不到源地址直接失败，只能重启 daemon 恢复。
+    # 这里把「缺失或空」归一化为 ::（通配），由内核自动跟随地址变化；用户显式填写的具体地址
+    # 一律保留，仅提示其失效风险。
+    if [ ! -f "$CONFIG_DIR" ]; then
+        return 0
+    fi
+    python3 - "$CONFIG_DIR" "$LOG_FILE" << 'PYEOF'
+import json, sys
+config_path, log_path = sys.argv[1], sys.argv[2]
+KEY = "bind-address-ipv6"
+
+def log(msg):
+    print(msg)
+    try:
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write(msg + "\n")
+    except Exception:
+        pass
+
+try:
+    with open(config_path, 'r', encoding='utf-8') as f:
+        cfg = json.load(f)
+except Exception as e:
+    sys.stderr.write("无法读取配置文件 %s: %s\n" % (config_path, e))
+    sys.exit(0)
+if not isinstance(cfg, dict):
+    sys.exit(0)
+
+value = cfg.get(KEY)
+if value is None or not str(value).strip():
+    cfg[KEY] = "::"
+    try:
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(cfg, f, indent=4, ensure_ascii=False)
+    except Exception as e:
+        sys.stderr.write("无法写入配置文件 %s: %s\n" % (config_path, e))
+        sys.exit(0)
+    log("已将 %s 归一化为 ::（通配监听），IPv6 地址变更后无需重启应用" % KEY)
+elif str(value).strip() != "::":
+    log("提示：%s = %s 为固定地址，IPv6 地址变更后 daemon 不会自动重绑，可能需要停止后重新启动应用" % (KEY, value))
+PYEOF
+}
+
 read_rpc_creds() {
     # 从 .rpc_secret 读取 RPC 明文凭证（user:pass），供 SeedArk 连接 daemon 使用
     RPC_USER="transmission"
@@ -310,6 +359,7 @@ start() {
     "peer-limit-global": 200,
     "peer-port": 51413,
     "peer-port-random-on-start": true,
+    "bind-address-ipv6": "::",
     "rpc-enabled": true,
     "rpc-authentication-required": false,
     "rpc-bind-address": "127.0.0.1",
@@ -348,6 +398,9 @@ EOF
 
     # 同步 RPC 明文凭证到 .rpc_secret，供网关代理免密注入（开启认证后网关访问仍免密）
     write_rpc_secret
+
+    # 归一化 IPv6 绑定（daemon 未运行时才改配置文件，避免与运行中的 daemon 回写冲突）
+    normalize_ipv6_bind
 
     # 启动transmission-daemon
     echo "启动 ${APP_NAME}..."
@@ -466,6 +519,11 @@ case "$1" in
         write_rpc_secret
         exit $?
         ;;
+    fix_ipv6_bind)
+        # 供升级/配置回调复用：归一化 bind-address-ipv6（详见 normalize_ipv6_bind 注释）
+        normalize_ipv6_bind
+        exit $?
+        ;;
     start)
         start
         ;;
@@ -479,7 +537,7 @@ case "$1" in
         status
         ;;
     *)
-        echo "用法: $0 {start|stop|restart|status}"
+        echo "用法: $0 {start|stop|restart|status|write_secret|fix_ipv6_bind}"
         exit 1
         ;;
 esac

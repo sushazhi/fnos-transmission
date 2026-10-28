@@ -1,5 +1,5 @@
 appname = transmission
-version = 4.1.4.0
+version = 4.1.4.1
 display_name = Transmission
 desc = <b>轻量级BitTorrent下载工具</b>，支持磁力链接、种子文件、DHT/PEX/LSD P2P网络。<br><br>✨ <b>全新现代 Web 界面</b>：基于 Go + React 重构的管理面板，WebSocket 实时推送、移动端优先、PWA 可安装。<br><br>🔐 <b>免密登录：</b>接入fnOS统一网关，登录系统后即可直接打开，无需设置账号密码。<br><br>🌐 <b>访问方式：</b>通过fnOS统一网关（桌面图标）访问，无需配置端口。<br><br>🔧 <b>端口修改：</b>如需自定义本机内部RPC端口，可在<b>应用设置</b>中修改。<br><br>🐛 <b>问题反馈：</b><a href="https://github.com/sushazhi/fnos-transmission/issues" target="_blank">GitHub Issues</a>
 
@@ -25,4 +25,4 @@ desktop_uidir = ui
 desktop_applaunchname = transmission.Application
 
 # 更新日志
-changelog = 更新日志<br>v4.1.4.0:<br>1. Transmission 上游升级到 4.1.4：transmission-daemon 于 Alpine 容器内 musl 全静态编译，CI 自动重建 arm64/amd64 双架构<br>2. WebUI 面板（SeedArk）在构建时自动取最新 release，无需改 manifest<br>3. 本条目由 GitHub Actions 月末检查上游后自动生成
+changelog = 更新日志<br>v4.1.4.1:<br>1. 修复 IPv6 地址变更后必须重启应用才绑到新地址的问题：bind-address-ipv6 归一化为通配 ::，peer 端口与 DHT/uTP 监听自动跟随新地址<br>2. 启动与升级时会自动归一化该配置，旧版本升级后无需手动改配置

@@ -195,6 +195,10 @@ if [ -n "$MAIN_SCRIPT" ]; then
     # 同步/修复网关免密凭证：升级后 settings.json 密码通常已是 hash，
     # 若 .rpc_secret 缺失则重建随机内部凭证，避免升级后打开桌面图标弹认证框
     "$MAIN_SCRIPT" write_secret 2>/dev/null || true
+    # IPv6 绑定归一化：老配置里 bind-address-ipv6 缺失或为空时会被 daemon 绑到「启动时探测到的
+    # 全局单播 IPv6 具体地址」，地址变更后不会重绑（transmission#873），必须重启应用才恢复；
+    # 归一化为 :: 即可自动跟随地址变化。用户显式填写的具体地址保留不动。
+    "$MAIN_SCRIPT" fix_ipv6_bind || true
     "$MAIN_SCRIPT" start
     EXIT_CODE=$?
 else

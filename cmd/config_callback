@@ -161,6 +161,7 @@ else
     "peer-limit-global": 200,
     "peer-port": 51413,
     "peer-port-random-on-start": true,
+    "bind-address-ipv6": "::",
     "rpc-enabled": true,
     "rpc-authentication-required": ${RPC_AUTH_BOOL},
     "rpc-bind-address": "${RPC_BIND_ADDRESS}",
